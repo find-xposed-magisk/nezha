@@ -16,22 +16,30 @@ const (
 	WAFBlockReasonTypeAgentAuthFail
 )
 
+const (
+	BlockIDgRPC = -127 + iota
+	BlockIDToken
+	BlockIDUnknownUser
+)
+
 type WAFApiMock struct {
-	IP                 string `json:"ip,omitempty"`
-	Count              uint64 `json:"count,omitempty"`
-	LastBlockReason    uint8  `json:"last_block_reason,omitempty"`
-	LastBlockTimestamp uint64 `json:"last_block_timestamp,omitempty"`
+	IP              string `json:"ip,omitempty"`
+	BlockIdentifier int64  `json:"block_identifier,omitempty"`
+	BlockReason     uint8  `json:"block_reason,omitempty"`
+	BlockTimestamp  uint64 `json:"block_timestamp,omitempty"`
+	Count           uint64 `json:"count,omitempty"`
 }
 
 type WAF struct {
-	IP                 []byte `gorm:"type:binary(16);primaryKey" json:"ip,omitempty"`
-	Count              uint64 `json:"count,omitempty"`
-	LastBlockReason    uint8  `json:"last_block_reason,omitempty"`
-	LastBlockTimestamp uint64 `json:"last_block_timestamp,omitempty"`
+	IP              []byte `gorm:"type:binary(16);primaryKey" json:"ip,omitempty"`
+	BlockIdentifier int64  `gorm:"primaryKey" json:"block_identifier,omitempty"`
+	BlockReason     uint8  `json:"block_reason,omitempty"`
+	BlockTimestamp  uint64 `gorm:"index" json:"block_timestamp,omitempty"`
+	Count           uint64 `json:"count,omitempty"`
 }
 
 func (w *WAF) TableName() string {
-	return "waf"
+	return "nz_waf"
 }
 
 func CheckIP(db *gorm.DB, ip string) error {
@@ -42,22 +50,31 @@ func CheckIP(db *gorm.DB, ip string) error {
 	if err != nil {
 		return err
 	}
-	var w WAF
-	result := db.Limit(1).Find(&w, "ip = ?", ipBinary)
+
+	var blockTimestamp uint64
+	result := db.Model(&WAF{}).Order("block_timestamp desc").Select("block_timestamp").Where("ip = ?", ipBinary).Limit(1).Find(&blockTimestamp)
 	if result.Error != nil {
 		return result.Error
 	}
-	if result.RowsAffected == 0 { // 检查是否未找到记录
+
+	// 检查是否未找到记录
+	if result.RowsAffected < 1 {
 		return nil
 	}
+
+	var count uint64
+	if err := db.Model(&WAF{}).Select("SUM(count)").Where("ip = ?", ipBinary).Scan(&count).Error; err != nil {
+		return err
+	}
+
 	now := time.Now().Unix()
-	if powAdd(w.Count, 4, w.LastBlockTimestamp) > uint64(now) {
+	if powAdd(count, 4, blockTimestamp) > uint64(now) {
 		return errors.New("you are blocked by nezha WAF")
 	}
 	return nil
 }
 
-func ClearIP(db *gorm.DB, ip string) error {
+func ClearIP(db *gorm.DB, ip string, uid int64) error {
 	if ip == "" {
 		return nil
 	}
@@ -65,7 +82,7 @@ func ClearIP(db *gorm.DB, ip string) error {
 	if err != nil {
 		return err
 	}
-	return db.Unscoped().Delete(&WAF{}, "ip = ?", ipBinary).Error
+	return db.Unscoped().Delete(&WAF{}, "ip = ? and block_identifier = ?", ipBinary, uid).Error
 }
 
 func BatchClearIP(db *gorm.DB, ip []string) error {
@@ -83,7 +100,7 @@ func BatchClearIP(db *gorm.DB, ip []string) error {
 	return db.Unscoped().Delete(&WAF{}, "ip in (?)", ips).Error
 }
 
-func BlockIP(db *gorm.DB, ip string, reason uint8) error {
+func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 	if ip == "" {
 		return nil
 	}
@@ -91,16 +108,19 @@ func BlockIP(db *gorm.DB, ip string, reason uint8) error {
 	if err != nil {
 		return err
 	}
-	var w WAF
-	w.IP = ipBinary
+	w := WAF{
+		IP:              ipBinary,
+		BlockIdentifier: uid,
+	}
+	now := uint64(time.Now().Unix())
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where(&w).Attrs(WAF{
-			LastBlockReason:    reason,
-			LastBlockTimestamp: uint64(time.Now().Unix()),
+			BlockReason:    reason,
+			BlockTimestamp: now,
 		}).FirstOrCreate(&w).Error; err != nil {
 			return err
 		}
-		return tx.Exec("UPDATE waf SET count = count + 1, last_block_reason = ?, last_block_timestamp = ? WHERE ip = ?", reason, uint64(time.Now().Unix()), ipBinary).Error
+		return tx.Exec("UPDATE nz_waf SET count = count + 1, block_reason = ?, block_timestamp = ? WHERE ip = ? and block_identifier = ?", reason, now, ipBinary, uid).Error
 	})
 }
 

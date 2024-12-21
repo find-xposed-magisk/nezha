@@ -56,9 +56,24 @@ func updateServer(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
+	singleton.DDNSCacheLock.RLock()
+	for _, pid := range sf.DDNSProfiles {
+		if p, ok := singleton.DDNSCache[pid]; ok {
+			if !p.HasPermission(c) {
+				singleton.DDNSCacheLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.DDNSCacheLock.RUnlock()
+
 	var s model.Server
 	if err := singleton.DB.First(&s, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)
+	}
+
+	if !s.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	s.Name = sf.Name
@@ -103,6 +118,17 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&servers); err != nil {
 		return nil, err
 	}
+
+	singleton.ServerLock.RLock()
+	for _, sid := range servers {
+		if s, ok := singleton.ServerList[sid]; ok {
+			if !s.HasPermission(c) {
+				singleton.ServerLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.ServerLock.RUnlock()
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", servers).Error; err != nil {
@@ -161,6 +187,9 @@ func forceUpdateServer(c *gin.Context) (*model.ForceUpdateResponse, error) {
 		server := singleton.ServerList[sid]
 		singleton.ServerLock.RUnlock()
 		if server != nil && server.TaskStream != nil {
+			if !server.HasPermission(c) {
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
 			if err := server.TaskStream.Send(&pb.Task{
 				Type: model.TaskTypeUpgrade,
 			}); err != nil {

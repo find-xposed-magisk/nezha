@@ -50,6 +50,9 @@ func createAlertRule(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
+	uid := getUid(c)
+
+	r.UserID = uid
 	r.Name = arf.Name
 	r.Rules = arf.Rules
 	r.FailTriggerTasks = arf.FailTriggerTasks
@@ -59,7 +62,7 @@ func createAlertRule(c *gin.Context) (uint64, error) {
 	r.TriggerMode = arf.TriggerMode
 	r.Enable = &enable
 
-	if err := validateRule(&r); err != nil {
+	if err := validateRule(c, &r); err != nil {
 		return 0, err
 	}
 
@@ -100,6 +103,10 @@ func updateAlertRule(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("alert id %d does not exist", id)
 	}
 
+	if !r.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	r.Name = arf.Name
 	r.Rules = arf.Rules
 	r.FailTriggerTasks = arf.FailTriggerTasks
@@ -109,7 +116,7 @@ func updateAlertRule(c *gin.Context) (any, error) {
 	r.TriggerMode = arf.TriggerMode
 	r.Enable = &enable
 
-	if err := validateRule(&r); err != nil {
+	if err := validateRule(c, &r); err != nil {
 		return 0, err
 	}
 
@@ -134,9 +141,19 @@ func updateAlertRule(c *gin.Context) (any, error) {
 // @Router /batch-delete/alert-rule [post]
 func batchDeleteAlertRule(c *gin.Context) (any, error) {
 	var ar []uint64
-
 	if err := c.ShouldBindJSON(&ar); err != nil {
 		return nil, err
+	}
+
+	var ars []model.AlertRule
+	if err := singleton.DB.Where("id in (?)", ar).Find(&ars).Error; err != nil {
+		return nil, err
+	}
+
+	for _, a := range ars {
+		if !a.HasPermission(c) {
+			return nil, singleton.Localizer.ErrorT("permission denied")
+		}
 	}
 
 	if err := singleton.DB.Unscoped().Delete(&model.AlertRule{}, "id in (?)", ar).Error; err != nil {
@@ -147,9 +164,20 @@ func batchDeleteAlertRule(c *gin.Context) (any, error) {
 	return nil, nil
 }
 
-func validateRule(r *model.AlertRule) error {
+func validateRule(c *gin.Context, r *model.AlertRule) error {
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
+			singleton.ServerLock.RLock()
+			for s := range rule.Ignore {
+				if server, ok := singleton.ServerList[s]; ok {
+					if !server.HasPermission(c) {
+						singleton.ServerLock.RUnlock()
+						return singleton.Localizer.ErrorT("permission denied")
+					}
+				}
+			}
+			singleton.ServerLock.RUnlock()
+
 			if !rule.IsTransferDurationRule() {
 				if rule.Duration < 3 {
 					return singleton.Localizer.ErrorT("duration need to be at least 3")

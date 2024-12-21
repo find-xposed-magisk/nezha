@@ -190,7 +190,10 @@ func createService(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
+	uid := getUid(c)
+
 	var m model.Service
+	m.UserID = uid
 	m.Name = mf.Name
 	m.Target = strings.TrimSpace(mf.Target)
 	m.Type = mf.Type
@@ -206,6 +209,10 @@ func createService(c *gin.Context) (uint64, error) {
 	m.EnableTriggerTask = mf.EnableTriggerTask
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
+
+	if err := validateServers(c, &m); err != nil {
+		return 0, err
+	}
 
 	if err := singleton.DB.Create(&m).Error; err != nil {
 		return 0, newGormError("%v", err)
@@ -260,6 +267,11 @@ func updateService(c *gin.Context) (any, error) {
 	if err := singleton.DB.First(&m, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("service id %d does not exist", id)
 	}
+
+	if !m.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	m.Name = mf.Name
 	m.Target = strings.TrimSpace(mf.Target)
 	m.Type = mf.Type
@@ -275,6 +287,10 @@ func updateService(c *gin.Context) (any, error) {
 	m.EnableTriggerTask = mf.EnableTriggerTask
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
+
+	if err := validateServers(c, &m); err != nil {
+		return 0, err
+	}
 
 	if err := singleton.DB.Save(&m).Error; err != nil {
 		return nil, newGormError("%v", err)
@@ -318,6 +334,18 @@ func batchDeleteService(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&ids); err != nil {
 		return nil, err
 	}
+
+	singleton.ServiceSentinelShared.ServicesLock.RLock()
+	for _, id := range ids {
+		if ss, ok := singleton.ServiceSentinelShared.Services[id]; ok {
+			if !ss.HasPermission(c) {
+				singleton.ServiceSentinelShared.ServicesLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.ServiceSentinelShared.ServicesLock.RUnlock()
+
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error; err != nil {
 			return err
@@ -330,4 +358,19 @@ func batchDeleteService(c *gin.Context) (any, error) {
 	singleton.ServiceSentinelShared.OnServiceDelete(ids)
 	singleton.ServiceSentinelShared.UpdateServiceList()
 	return nil, nil
+}
+
+func validateServers(c *gin.Context, ss *model.Service) error {
+	singleton.ServerLock.RLock()
+	defer singleton.ServerLock.RUnlock()
+
+	for s := range ss.SkipServers {
+		if server, ok := singleton.ServerList[s]; ok {
+			if !server.HasPermission(c) {
+				return singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+
+	return nil
 }

@@ -20,7 +20,7 @@ import (
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.NotificationGroupResponseItem]
 // @Router /notification-group [get]
-func listNotificationGroup(c *gin.Context) ([]model.NotificationGroupResponseItem, error) {
+func listNotificationGroup(c *gin.Context) ([]*model.NotificationGroupResponseItem, error) {
 	var ng []model.NotificationGroup
 	if err := singleton.DB.Find(&ng).Error; err != nil {
 		return nil, err
@@ -39,9 +39,9 @@ func listNotificationGroup(c *gin.Context) ([]model.NotificationGroupResponseIte
 		groupNotifications[n.NotificationGroupID] = append(groupNotifications[n.NotificationGroupID], n.NotificationID)
 	}
 
-	ngRes := make([]model.NotificationGroupResponseItem, 0, len(ng))
+	ngRes := make([]*model.NotificationGroupResponseItem, 0, len(ng))
 	for _, n := range ng {
-		ngRes = append(ngRes, model.NotificationGroupResponseItem{
+		ngRes = append(ngRes, &model.NotificationGroupResponseItem{
 			Group:         n,
 			Notifications: groupNotifications[n.ID],
 		})
@@ -68,8 +68,22 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 	}
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
+	singleton.NotificationsLock.RLock()
+	for _, nid := range ngf.Notifications {
+		if n, ok := singleton.NotificationMap[nid]; ok {
+			if !n.HasPermission(c) {
+				singleton.NotificationsLock.RUnlock()
+				return 0, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NotificationsLock.RUnlock()
+
+	uid := getUid(c)
+
 	var ng model.NotificationGroup
 	ng.Name = ngf.Name
+	ng.UserID = uid
 
 	var count int64
 	if err := singleton.DB.Model(&model.Notification{}).Where("id in (?)", ngf.Notifications).Count(&count).Error; err != nil {
@@ -86,6 +100,9 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 		}
 		for _, n := range ngf.Notifications {
 			if err := tx.Create(&model.NotificationGroupNotification{
+				Common: model.Common{
+					UserID: uid,
+				},
 				NotificationGroupID: ng.ID,
 				NotificationID:      n,
 			}).Error; err != nil {
@@ -126,9 +143,25 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&ngf); err != nil {
 		return nil, err
 	}
+
+	singleton.NotificationsLock.RLock()
+	for _, nid := range ngf.Notifications {
+		if n, ok := singleton.NotificationMap[nid]; ok {
+			if !n.HasPermission(c) {
+				singleton.NotificationsLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NotificationsLock.RUnlock()
+
 	var ngDB model.NotificationGroup
 	if err := singleton.DB.First(&ngDB, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("group id %d does not exist", id)
+	}
+
+	if !ngDB.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	ngDB.Name = ngf.Name
@@ -142,6 +175,8 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("have invalid notification id")
 	}
 
+	uid := getUid(c)
+
 	err = singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&ngDB).Error; err != nil {
 			return err
@@ -152,6 +187,9 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 
 		for _, n := range ngf.Notifications {
 			if err := tx.Create(&model.NotificationGroupNotification{
+				Common: model.Common{
+					UserID: uid,
+				},
 				NotificationGroupID: ngDB.ID,
 				NotificationID:      n,
 			}).Error; err != nil {
@@ -183,6 +221,17 @@ func batchDeleteNotificationGroup(c *gin.Context) (any, error) {
 	var ngn []uint64
 	if err := c.ShouldBindJSON(&ngn); err != nil {
 		return nil, err
+	}
+
+	var ng []model.NotificationGroup
+	if err := singleton.DB.Where("id in (?)", ngn).Find(&ng).Error; err != nil {
+		return nil, err
+	}
+
+	for _, n := range ng {
+		if !n.HasPermission(c) {
+			return nil, singleton.Localizer.ErrorT("permission denied")
+		}
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {

@@ -100,12 +100,34 @@ func DispatchTask(serviceSentinelDispatchBus <-chan model.Service) {
 				continue
 			}
 			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
-				singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				server := singleton.SortedServerList[workedServerIndex]
+				singleton.UserLock.RLock()
+				var role uint8
+				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
+					role = model.RoleMember
+				} else {
+					role = u.Role
+				}
+				singleton.UserLock.RUnlock()
+				if task.UserID == server.UserID || role == model.RoleAdmin {
+					singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				}
 				workedServerIndex++
 				continue
 			}
 			if task.Cover == model.ServiceCoverAll && !task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
-				singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				server := singleton.SortedServerList[workedServerIndex]
+				singleton.UserLock.RLock()
+				var role uint8
+				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
+					role = model.RoleMember
+				} else {
+					role = u.Role
+				}
+				singleton.UserLock.RUnlock()
+				if task.UserID == server.UserID || role == model.RoleAdmin {
+					singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				}
 				workedServerIndex++
 				continue
 			}
