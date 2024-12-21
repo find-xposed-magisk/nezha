@@ -16,6 +16,7 @@ type StreamServer struct {
 
 type StreamServerData struct {
 	Now     int64          `json:"now,omitempty"`
+	Online  uint64         `json:"online,omitempty"`
 	Servers []StreamServer `json:"servers,omitempty"`
 }
 

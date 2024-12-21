@@ -107,6 +107,8 @@ func serverStream(c *gin.Context) (any, error) {
 		return nil, newWsError("%v", err)
 	}
 	defer conn.Close()
+	singleton.OnlineUsers.Add(1)
+	defer singleton.OnlineUsers.Add(^uint64(0))
 	count := 0
 	for {
 		stat, err := getServerStat(c, count == 0)
@@ -164,6 +166,7 @@ func getServerStat(c *gin.Context, withPublicNote bool) ([]byte, error) {
 
 		return utils.Json.Marshal(model.StreamServerData{
 			Now:     time.Now().Unix() * 1000,
+			Online:  singleton.OnlineUsers.Load(),
 			Servers: servers,
 		})
 	})
