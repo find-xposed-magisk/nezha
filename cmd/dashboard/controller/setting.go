@@ -50,7 +50,7 @@ func listConfig(c *gin.Context) (model.SettingResponse, error) {
 // @Security BearerAuth
 // @Schemes
 // @Description Edit config
-// @Tags auth required
+// @Tags admin required
 // @Accept json
 // @Param body body model.SettingForm true "SettingForm"
 // @Produce json

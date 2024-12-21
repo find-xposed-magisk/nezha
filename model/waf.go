@@ -14,12 +14,14 @@ const (
 	WAFBlockReasonTypeLoginFail
 	WAFBlockReasonTypeBruteForceToken
 	WAFBlockReasonTypeAgentAuthFail
+	WAFBlockReasonTypeManual
 )
 
 const (
 	BlockIDgRPC = -127 + iota
 	BlockIDToken
 	BlockIDUnknownUser
+	BlockIDManual
 )
 
 type WAFApiMock struct {
