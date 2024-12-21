@@ -3,6 +3,7 @@ package singleton
 import (
 	_ "embed"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -23,6 +24,7 @@ var (
 	Loc               *time.Location
 	FrontendTemplates []model.FrontendTemplate
 	DashboardBootTime = uint64(time.Now().Unix())
+	OnlineUsers       = new(atomic.Uint64)
 )
 
 //go:embed frontend-templates.yaml
