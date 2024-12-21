@@ -20,7 +20,7 @@ import (
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.ServerGroupResponseItem]
 // @Router /server-group [get]
-func listServerGroup(c *gin.Context) ([]model.ServerGroupResponseItem, error) {
+func listServerGroup(c *gin.Context) ([]*model.ServerGroupResponseItem, error) {
 	var sg []model.ServerGroup
 	if err := singleton.DB.Find(&sg).Error; err != nil {
 		return nil, err
@@ -38,9 +38,9 @@ func listServerGroup(c *gin.Context) ([]model.ServerGroupResponseItem, error) {
 		groupServers[s.ServerGroupId] = append(groupServers[s.ServerGroupId], s.ServerId)
 	}
 
-	var sgRes []model.ServerGroupResponseItem
+	var sgRes []*model.ServerGroupResponseItem
 	for _, s := range sg {
-		sgRes = append(sgRes, model.ServerGroupResponseItem{
+		sgRes = append(sgRes, &model.ServerGroupResponseItem{
 			Group:   s,
 			Servers: groupServers[s.ID],
 		})
@@ -67,8 +67,22 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 	}
 	sgf.Servers = slices.Compact(sgf.Servers)
 
+	singleton.ServerLock.RLock()
+	for _, sid := range sgf.Servers {
+		if server, ok := singleton.ServerList[sid]; ok {
+			if !server.HasPermission(c) {
+				singleton.ServerLock.RUnlock()
+				return 0, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.ServerLock.RUnlock()
+
+	uid := getUid(c)
+
 	var sg model.ServerGroup
 	sg.Name = sgf.Name
+	sg.UserID = uid
 
 	var count int64
 	if err := singleton.DB.Model(&model.Server{}).Where("id in (?)", sgf.Servers).Count(&count).Error; err != nil {
@@ -84,6 +98,9 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 		}
 		for _, s := range sgf.Servers {
 			if err := tx.Create(&model.ServerGroupServer{
+				Common: model.Common{
+					UserID: uid,
+				},
 				ServerGroupId: sg.ID,
 				ServerId:      s,
 			}).Error; err != nil {
@@ -125,10 +142,26 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	}
 	sg.Servers = slices.Compact(sg.Servers)
 
+	singleton.ServerLock.RLock()
+	for _, sid := range sg.Servers {
+		if server, ok := singleton.ServerList[sid]; ok {
+			if !server.HasPermission(c) {
+				singleton.ServerLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.ServerLock.RUnlock()
+
 	var sgDB model.ServerGroup
 	if err := singleton.DB.First(&sgDB, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("group id %d does not exist", id)
 	}
+
+	if !sgDB.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("unauthorized")
+	}
+
 	sgDB.Name = sg.Name
 
 	var count int64
@@ -138,6 +171,8 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	if count != int64(len(sg.Servers)) {
 		return nil, singleton.Localizer.ErrorT("have invalid server id")
 	}
+
+	uid := getUid(c)
 
 	err = singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&sgDB).Error; err != nil {
@@ -149,6 +184,9 @@ func updateServerGroup(c *gin.Context) (any, error) {
 
 		for _, s := range sg.Servers {
 			if err := tx.Create(&model.ServerGroupServer{
+				Common: model.Common{
+					UserID: uid,
+				},
 				ServerGroupId: sgDB.ID,
 				ServerId:      s,
 			}).Error; err != nil {
@@ -179,6 +217,17 @@ func batchDeleteServerGroup(c *gin.Context) (any, error) {
 	var sgs []uint64
 	if err := c.ShouldBindJSON(&sgs); err != nil {
 		return nil, err
+	}
+
+	var sg []model.ServerGroup
+	if err := singleton.DB.Where("id in (?)", sgs).Find(&sg).Error; err != nil {
+		return nil, err
+	}
+
+	for _, s := range sg {
+		if !s.HasPermission(c) {
+			return nil, singleton.Localizer.ErrorT("permission denied")
+		}
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {

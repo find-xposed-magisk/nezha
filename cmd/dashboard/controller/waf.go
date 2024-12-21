@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
@@ -13,16 +15,40 @@ import (
 // @Schemes
 // @Description List server
 // @Tags auth required
+// @Param limit query uint false "Page limit"
+// @Param offset query uint false "Page offset"
 // @Produce json
-// @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
+// @Success 200 {object} model.PaginatedResponse[[]model.WAFApiMock, model.WAFApiMock]
 // @Router /waf [get]
-func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
+func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
+	limit, err := strconv.Atoi(c.Query("limit"))
+	if err != nil || limit < 1 {
+		limit = 25
+	}
+
+	offset, err := strconv.Atoi(c.Query("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
 	var waf []*model.WAF
-	if err := singleton.DB.Find(&waf).Error; err != nil {
+	if err := singleton.DB.Limit(limit).Offset(offset).Find(&waf).Error; err != nil {
 		return nil, err
 	}
 
-	return waf, nil
+	var total int64
+	if err := singleton.DB.Model(&model.WAF{}).Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	return &model.Value[[]*model.WAF]{
+		Value: waf,
+		Pagination: model.Pagination{
+			Offset: offset,
+			Limit:  limit,
+			Total:  total,
+		},
+	}, nil
 }
 
 // Batch delete blocked addresses

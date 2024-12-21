@@ -48,6 +48,7 @@ func createNotification(c *gin.Context) (uint64, error) {
 	}
 
 	var n model.Notification
+	n.UserID = getUid(c)
 	n.Name = nf.Name
 	n.RequestMethod = nf.RequestMethod
 	n.RequestType = nf.RequestType
@@ -106,6 +107,10 @@ func updateNotification(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("notification id %d does not exist", id)
 	}
 
+	if !n.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	n.Name = nf.Name
 	n.RequestMethod = nf.RequestMethod
 	n.RequestType = nf.RequestType
@@ -149,10 +154,19 @@ func updateNotification(c *gin.Context) (any, error) {
 // @Router /batch-delete/notification [post]
 func batchDeleteNotification(c *gin.Context) (any, error) {
 	var n []uint64
-
 	if err := c.ShouldBindJSON(&n); err != nil {
 		return nil, err
 	}
+
+	singleton.NotificationsLock.RLock()
+	for _, nid := range n {
+		if ns, ok := singleton.NotificationMap[nid]; ok {
+			if !ns.HasPermission(c) {
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NotificationsLock.RUnlock()
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Delete(&model.Notification{}, "id in (?)", n).Error; err != nil {

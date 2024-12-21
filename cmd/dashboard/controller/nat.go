@@ -51,6 +51,18 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
+	singleton.ServerLock.RLock()
+	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+		if !server.HasPermission(c) {
+			singleton.ServerLock.RUnlock()
+			return 0, singleton.Localizer.ErrorT("permission denied")
+		}
+	}
+	singleton.ServerLock.RUnlock()
+
+	uid := getUid(c)
+
+	n.UserID = uid
 	n.Name = nf.Name
 	n.Domain = nf.Domain
 	n.Host = nf.Host
@@ -90,9 +102,22 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
+	singleton.ServerLock.RLock()
+	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+		if !server.HasPermission(c) {
+			singleton.ServerLock.RUnlock()
+			return nil, singleton.Localizer.ErrorT("permission denied")
+		}
+	}
+	singleton.ServerLock.RUnlock()
+
 	var n model.NAT
 	if err = singleton.DB.First(&n, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("profile id %d does not exist", id)
+	}
+
+	if !n.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	n.Name = nf.Name
@@ -122,10 +147,20 @@ func updateNAT(c *gin.Context) (any, error) {
 // @Router /batch-delete/nat [post]
 func batchDeleteNAT(c *gin.Context) (any, error) {
 	var n []uint64
-
 	if err := c.ShouldBindJSON(&n); err != nil {
 		return nil, err
 	}
+
+	singleton.NATCacheRwLock.RLock()
+	for _, id := range n {
+		if p, ok := singleton.NATCache[singleton.NATIDToDomain[id]]; ok {
+			if !p.HasPermission(c) {
+				singleton.NATCacheRwLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NATCacheRwLock.RUnlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.NAT{}, "id in (?)", n).Error; err != nil {
 		return nil, newGormError("%v", err)

@@ -42,6 +42,7 @@ func InitTimezoneAndCache() {
 
 // LoadSingleton 加载子服务并执行
 func LoadSingleton() {
+	initUser()          // 加载用户ID绑定表
 	initI18n()          // 加载本地化服务
 	loadNotifications() // 加载通知服务
 	loadServers()       // 加载服务器列表
@@ -81,8 +82,8 @@ func InitDBFromPath(path string) {
 	}
 	err = DB.AutoMigrate(model.Server{}, model.User{}, model.ServerGroup{}, model.NotificationGroup{},
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
-		model.ServiceHistory{}, model.Cron{}, model.Transfer{}, model.ServerGroupServer{}, model.UserGroup{},
-		model.UserGroupUser{}, model.NAT{}, model.DDNSProfile{}, model.NotificationGroupNotification{},
+		model.ServiceHistory{}, model.Cron{}, model.Transfer{}, model.ServerGroupServer{},
+		model.NAT{}, model.DDNSProfile{}, model.NotificationGroupNotification{},
 		model.WAF{})
 	if err != nil {
 		panic(err)

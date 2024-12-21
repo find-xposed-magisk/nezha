@@ -36,12 +36,16 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 
 	ip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
 
-	if clientSecret != singleton.Conf.AgentSecretKey {
-		model.BlockIP(singleton.DB, ip, model.WAFBlockReasonTypeAgentAuthFail)
+	singleton.UserLock.RLock()
+	userId, ok := singleton.AgentSecretToUserId[clientSecret]
+	if !ok && clientSecret != singleton.Conf.AgentSecretKey {
+		singleton.UserLock.RUnlock()
+		model.BlockIP(singleton.DB, ip, model.WAFBlockReasonTypeAgentAuthFail, model.BlockIDgRPC)
 		return 0, status.Error(codes.Unauthenticated, "客户端认证失败")
 	}
+	singleton.UserLock.RUnlock()
 
-	model.ClearIP(singleton.DB, ip)
+	model.ClearIP(singleton.DB, ip, model.BlockIDgRPC)
 
 	var clientUUID string
 	if value, ok := md["client_uuid"]; ok {
@@ -53,21 +57,26 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 	}
 
 	singleton.ServerLock.RLock()
-	defer singleton.ServerLock.RUnlock()
-
 	clientID, hasID := singleton.ServerUUIDToID[clientUUID]
+	singleton.ServerLock.RUnlock()
+
 	if !hasID {
-		s := model.Server{UUID: clientUUID, Name: petname.Generate(2, "-")}
+		s := model.Server{UUID: clientUUID, Name: petname.Generate(2, "-"), Common: model.Common{
+			UserID: userId,
+		}}
 		if err := singleton.DB.Create(&s).Error; err != nil {
 			return 0, status.Error(codes.Unauthenticated, err.Error())
 		}
 		s.Host = &model.Host{}
 		s.State = &model.HostState{}
 		s.GeoIP = &model.GeoIP{}
-		// generate a random silly server name
+
+		singleton.ServerLock.Lock()
 		singleton.ServerList[s.ID] = &s
 		singleton.ServerUUIDToID[clientUUID] = s.ID
+		singleton.ServerLock.Unlock()
 		singleton.ReSortServer()
+
 		clientID = s.ID
 	}
 

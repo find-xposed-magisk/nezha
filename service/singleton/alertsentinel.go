@@ -143,8 +143,16 @@ func checkStatus() {
 		}
 		for _, server := range ServerList {
 			// 监测点
+			UserLock.RLock()
+			var role uint8
+			if u, ok := UserInfoMap[server.UserID]; !ok {
+				role = model.RoleMember
+			} else {
+				role = u.Role
+			}
+			UserLock.RUnlock()
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.
-				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB))
+				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB, role))
 			// 发送通知，分为触发报警和恢复通知
 			max, passed := alert.Check(alertsStore[alert.ID][server.ID])
 			// 保存当前服务器状态信息

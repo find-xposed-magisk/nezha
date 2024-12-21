@@ -56,6 +56,7 @@ func createDDNS(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("the retry count must be an integer between 1 and 10")
 	}
 
+	p.UserID = getUid(c)
 	p.Name = df.Name
 	enableIPv4 := df.EnableIPv4
 	enableIPv6 := df.EnableIPv6
@@ -125,6 +126,10 @@ func updateDDNS(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("profile id %d does not exist", id)
 	}
 
+	if !p.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	p.Name = df.Name
 	enableIPv4 := df.EnableIPv4
 	enableIPv6 := df.EnableIPv6
@@ -177,6 +182,17 @@ func batchDeleteDDNS(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&ddnsConfigs); err != nil {
 		return nil, err
 	}
+
+	singleton.DDNSCacheLock.RLock()
+	for _, pid := range ddnsConfigs {
+		if p, ok := singleton.DDNSCache[pid]; ok {
+			if !p.HasPermission(c) {
+				singleton.DDNSCacheLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.DDNSCacheLock.RUnlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.DDNSProfile{}, "id in (?)", ddnsConfigs).Error; err != nil {
 		return nil, newGormError("%v", err)
