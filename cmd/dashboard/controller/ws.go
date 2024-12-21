@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/go-uuid"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/nezhahq/nezha/model"
@@ -102,13 +103,29 @@ func checkSameOrigin(r *http.Request) bool {
 // @Success 200 {object} model.StreamServerData
 // @Router /ws/server [get]
 func serverStream(c *gin.Context) (any, error) {
+	connId, err := uuid.GenerateUUID()
+	if err != nil {
+		return nil, newWsError("%v", err)
+	}
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return nil, newWsError("%v", err)
 	}
 	defer conn.Close()
-	singleton.OnlineUsers.Add(1)
-	defer singleton.OnlineUsers.Add(^uint64(0))
+
+	userIp := c.GetString(model.CtxKeyRealIPStr)
+	if userIp == "" {
+		userIp = c.RemoteIP()
+	}
+
+	singleton.AddOnlineUser(connId, &model.OnlineUser{
+		IP:          userIp,
+		ConnectedAt: time.Now(),
+		Conn:        conn,
+	})
+	defer singleton.RemoveOnlineUser(connId)
+
 	count := 0
 	for {
 		stat, err := getServerStat(c, count == 0)
@@ -166,7 +183,7 @@ func getServerStat(c *gin.Context, withPublicNote bool) ([]byte, error) {
 
 		return utils.Json.Marshal(model.StreamServerData{
 			Now:     time.Now().Unix() * 1000,
-			Online:  singleton.OnlineUsers.Load(),
+			Online:  singleton.GetOnlineUserCount(),
 			Servers: servers,
 		})
 	})

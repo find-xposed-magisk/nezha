@@ -56,7 +56,7 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
 // @Security BearerAuth
 // @Schemes
 // @Description Edit server
-// @Tags auth required
+// @Tags admin required
 // @Accept json
 // @Param request body []string true "block list"
 // @Produce json

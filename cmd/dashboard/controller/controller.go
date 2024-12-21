@@ -132,6 +132,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/waf", pCommonHandler(listBlockedAddress))
 	auth.POST("/batch-delete/waf", adminHandler(batchDeleteBlockedAddress))
 
+	auth.GET("/online-user", pCommonHandler(listOnlineUser))
+	auth.GET("/online-user/batch-block", adminHandler(batchBlockOnlineUser))
+
 	auth.PATCH("/setting", adminHandler(updateConfig))
 
 	r.NoRoute(fallbackToFrontend(frontendDist))

@@ -1,6 +1,9 @@
 package model
 
 import (
+	"time"
+
+	"github.com/gorilla/websocket"
 	"github.com/nezhahq/nezha/pkg/utils"
 	"gorm.io/gorm"
 )
@@ -20,7 +23,6 @@ type User struct {
 
 type UserInfo struct {
 	Role        uint8
-	_           [3]byte
 	AgentSecret string
 }
 
@@ -41,4 +43,12 @@ func (u *User) BeforeSave(tx *gorm.DB) error {
 type Profile struct {
 	User
 	LoginIP string `json:"login_ip,omitempty"`
+}
+
+type OnlineUser struct {
+	UserID      uint64    `json:"user_id,omitempty"`
+	ConnectedAt time.Time `json:"connected_at,omitempty"`
+	IP          string    `json:"ip,omitempty"`
+
+	Conn *websocket.Conn `json:"-"`
 }
