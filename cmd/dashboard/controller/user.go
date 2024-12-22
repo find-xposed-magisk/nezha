@@ -202,7 +202,7 @@ func listOnlineUser(c *gin.Context) (*model.Value[[]*model.OnlineUser], error) {
 // @Param request body []string true "block list"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[any]
-// @Router /online-user/batch-block [patch]
+// @Router /online-user/batch-block [post]
 func batchBlockOnlineUser(c *gin.Context) (any, error) {
 	var list []string
 	if err := c.ShouldBindJSON(&list); err != nil {
