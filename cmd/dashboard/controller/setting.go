@@ -20,11 +20,11 @@ import (
 // @Success 200 {object} model.CommonResponse[model.SettingResponse]
 // @Router /setting [get]
 func listConfig(c *gin.Context) (model.SettingResponse, error) {
-	u, ok := c.Get(model.CtxKeyAuthorizedUser)
-	var authorized bool
-	if ok {
+	u, authorized := c.Get(model.CtxKeyAuthorizedUser)
+	var isAdmin bool
+	if authorized {
 		user := u.(*model.User)
-		authorized = user.Role == model.RoleAdmin
+		isAdmin = user.Role == model.RoleAdmin
 	}
 
 	conf := model.SettingResponse{
@@ -33,7 +33,7 @@ func listConfig(c *gin.Context) (model.SettingResponse, error) {
 		FrontendTemplates: singleton.FrontendTemplates,
 	}
 
-	if !authorized {
+	if !authorized || !isAdmin {
 		conf = model.SettingResponse{
 			Config: model.Config{
 				SiteName:            conf.SiteName,
@@ -42,6 +42,11 @@ func listConfig(c *gin.Context) (model.SettingResponse, error) {
 				CustomCodeDashboard: conf.CustomCodeDashboard,
 			},
 		}
+	}
+
+	if !isAdmin {
+		conf.Config.TLS = false
+		conf.Config.InstallHost = conf.InstallHost
 	}
 
 	conf.Config.Language = strings.Replace(conf.Config.Language, "_", "-", -1)
