@@ -45,8 +45,8 @@ func listConfig(c *gin.Context) (model.SettingResponse, error) {
 	}
 
 	if !isAdmin {
-		conf.Config.TLS = false
-		conf.Config.InstallHost = conf.InstallHost
+		conf.Config.TLS = singleton.Conf.TLS
+		conf.Config.InstallHost = singleton.Conf.InstallHost
 	}
 
 	conf.Config.Language = strings.Replace(conf.Config.Language, "_", "-", -1)
