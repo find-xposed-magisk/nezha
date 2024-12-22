@@ -134,3 +134,49 @@ func TestBinaryToIPString(t *testing.T) {
 		}
 	}
 }
+
+func TestUnique(t *testing.T) {
+	cases := []struct {
+		input  []string
+		output []string
+	}{
+		{
+			input:  []string{"a", "b", "c", "a", "b", "c"},
+			output: []string{"a", "b", "c"},
+		},
+		{
+			input:  []string{"a", "b", "c"},
+			output: []string{"a", "b", "c"},
+		},
+		{
+			input:  []string{"a", "a", "a"},
+			output: []string{"a"},
+		},
+		{
+			input:  []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"},
+			output: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"},
+		},
+		{
+			input:  []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "a"},
+			output: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"},
+		},
+		{
+			input:  []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "a", "b", "c", "d", "e", "f", "g", "h", "i"},
+			output: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"},
+		},
+		{
+			input:  []string{},
+			output: []string{},
+		},
+		{
+			input:  []string{"a"},
+			output: []string{"a"},
+		},
+	}
+
+	for _, c := range cases {
+		if !reflect.DeepEqual(Unique(c.input), c.output) {
+			t.Fatalf("Expected %v, but got %v", c.output, Unique(c.input))
+		}
+	}
+}

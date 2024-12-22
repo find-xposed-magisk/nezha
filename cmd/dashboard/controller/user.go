@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -208,7 +209,7 @@ func batchBlockOnlineUser(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if err := singleton.BlockByIPs(list); err != nil {
+	if err := singleton.BlockByIPs(utils.Unique(list)); err != nil {
 		return nil, newGormError("%v", err)
 	}
 
