@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -68,7 +69,7 @@ func batchDeleteBlockedAddress(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if err := model.BatchClearIP(singleton.DB, list); err != nil {
+	if err := model.BatchClearIP(singleton.DB, utils.Unique(list)); err != nil {
 		return nil, newGormError("%v", err)
 	}
 

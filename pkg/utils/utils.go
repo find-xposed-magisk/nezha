@@ -152,3 +152,15 @@ func MapValuesToSlice[Map ~map[K]V, K comparable, V any](m Map) []V {
 	s := make([]V, 0, len(m))
 	return slices.AppendSeq(s, maps.Values(m))
 }
+
+func Unique[T comparable](s []T) []T {
+	m := make(map[T]struct{})
+	ret := make([]T, 0, len(s))
+	for _, v := range s {
+		if _, ok := m[v]; !ok {
+			m[v] = struct{}{}
+			ret = append(ret, v)
+		}
+	}
+	return ret
+}
