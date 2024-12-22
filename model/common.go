@@ -18,10 +18,8 @@ type Common struct {
 	ID        uint64    `gorm:"primaryKey" json:"id,omitempty"`
 	CreatedAt time.Time `gorm:"index;<-:create" json:"created_at,omitempty"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at,omitempty"`
-	// Do not use soft deletion
-	// DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
-	UserID uint64 `json:"-"`
+	UserID uint64 `gorm:"index;default:0" json:"-"`
 }
 
 func (c *Common) GetID() uint64 {
