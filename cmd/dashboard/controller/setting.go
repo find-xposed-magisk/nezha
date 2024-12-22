@@ -20,8 +20,12 @@ import (
 // @Success 200 {object} model.CommonResponse[model.SettingResponse]
 // @Router /setting [get]
 func listConfig(c *gin.Context) (model.SettingResponse, error) {
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember // TODO || isViewPasswordVerfied
+	u, ok := c.Get(model.CtxKeyAuthorizedUser)
+	var authorized bool
+	if ok {
+		user := u.(*model.User)
+		authorized = user.Role == model.RoleAdmin
+	}
 
 	conf := model.SettingResponse{
 		Config:            *singleton.Conf,
