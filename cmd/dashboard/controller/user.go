@@ -112,10 +112,13 @@ func createUser(c *gin.Context) (uint64, error) {
 	if uf.Username == "" {
 		return 0, singleton.Localizer.ErrorT("username can't be empty")
 	}
+	if uf.Role != model.RoleAdmin && uf.Role != model.RoleMember {
+		return 0, singleton.Localizer.ErrorT("invalid role")
+	}
 
 	var u model.User
 	u.Username = uf.Username
-	u.Role = model.RoleMember
+	u.Role = uf.Role
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(uf.Password), bcrypt.DefaultCost)
 	if err != nil {
