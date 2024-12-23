@@ -115,6 +115,14 @@ func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 		BlockIdentifier: uid,
 	}
 	now := uint64(time.Now().Unix())
+
+	var count interface{}
+	if reason == WAFBlockReasonTypeManual {
+		count = 99999
+	} else {
+		count = gorm.Expr("count + 1")
+	}
+
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where(&w).Attrs(WAF{
 			BlockReason:    reason,
@@ -122,7 +130,7 @@ func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 		}).FirstOrCreate(&w).Error; err != nil {
 			return err
 		}
-		return tx.Exec("UPDATE nz_waf SET count = count + 1, block_reason = ?, block_timestamp = ? WHERE ip = ? and block_identifier = ?", reason, now, ipBinary, uid).Error
+		return tx.Exec("UPDATE nz_waf SET count = ?, block_reason = ?, block_timestamp = ? WHERE ip = ? and block_identifier = ?", count, reason, now, ipBinary, uid).Error
 	})
 }
 
