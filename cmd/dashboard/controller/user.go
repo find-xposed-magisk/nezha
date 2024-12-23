@@ -172,6 +172,11 @@ func batchDeleteUser(c *gin.Context) (any, error) {
 // @Success 200 {object} model.PaginatedResponse[[]model.OnlineUser, model.OnlineUser]
 // @Router /online-user [get]
 func listOnlineUser(c *gin.Context) (*model.Value[[]*model.OnlineUser], error) {
+	var isAdmin bool
+	u, ok := c.Get(model.CtxKeyAuthorizedUser)
+	if ok {
+		isAdmin = u.(*model.User).Role == model.RoleAdmin
+	}
 	limit, err := strconv.Atoi(c.Query("limit"))
 	if err != nil || limit < 1 {
 		limit = 25
@@ -182,8 +187,21 @@ func listOnlineUser(c *gin.Context) (*model.Value[[]*model.OnlineUser], error) {
 		offset = 0
 	}
 
+	users := singleton.GetOnlineUsers(limit, offset)
+	if !isAdmin {
+		var newUsers []*model.OnlineUser
+		for _, user := range users {
+			newUsers = append(newUsers, &model.OnlineUser{
+				UserID:      user.UserID,
+				IP:          utils.IPDesensitize(user.IP),
+				ConnectedAt: user.ConnectedAt,
+			})
+		}
+		users = newUsers
+	}
+
 	return &model.Value[[]*model.OnlineUser]{
-		Value: singleton.GetOnlineUsers(limit, offset),
+		Value: users,
 		Pagination: model.Pagination{
 			Offset: offset,
 			Limit:  limit,
