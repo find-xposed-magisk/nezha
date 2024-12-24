@@ -119,7 +119,14 @@ func serverStream(c *gin.Context) (any, error) {
 		userIp = c.RemoteIP()
 	}
 
+	u, isMember := c.Get(model.CtxKeyAuthorizedUser)
+	var userId uint64
+	if isMember {
+		userId = u.(*model.User).ID
+	}
+
 	singleton.AddOnlineUser(connId, &model.OnlineUser{
+		UserID:      userId,
 		IP:          userIp,
 		ConnectedAt: time.Now(),
 		Conn:        conn,
@@ -128,7 +135,7 @@ func serverStream(c *gin.Context) (any, error) {
 
 	count := 0
 	for {
-		stat, err := getServerStat(c, count == 0)
+		stat, err := getServerStat(count == 0, isMember)
 		if err != nil {
 			continue
 		}
@@ -149,9 +156,7 @@ func serverStream(c *gin.Context) (any, error) {
 
 var requestGroup singleflight.Group
 
-func getServerStat(c *gin.Context, withPublicNote bool) ([]byte, error) {
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember // TODO || isViewPasswordVerfied
+func getServerStat(withPublicNote, authorized bool) ([]byte, error) {
 	v, err, _ := requestGroup.Do(fmt.Sprintf("serverStats::%t", authorized), func() (interface{}, error) {
 		singleton.SortedServerLock.RLock()
 		defer singleton.SortedServerLock.RUnlock()

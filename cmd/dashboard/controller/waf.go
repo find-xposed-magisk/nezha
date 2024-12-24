@@ -33,7 +33,7 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
 	}
 
 	var waf []*model.WAF
-	if err := singleton.DB.Limit(limit).Offset(offset).Find(&waf).Error; err != nil {
+	if err := singleton.DB.Order("block_timestamp DESC").Limit(limit).Offset(offset).Find(&waf).Error; err != nil {
 		return nil, err
 	}
 
