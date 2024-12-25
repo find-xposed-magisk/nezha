@@ -69,7 +69,7 @@ func batchDeleteBlockedAddress(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if err := model.BatchClearIP(singleton.DB, utils.Unique(list)); err != nil {
+	if err := model.BatchUnblockIP(singleton.DB, utils.Unique(list)); err != nil {
 		return nil, newGormError("%v", err)
 	}
 

@@ -76,7 +76,7 @@ func CheckIP(db *gorm.DB, ip string) error {
 	return nil
 }
 
-func ClearIP(db *gorm.DB, ip string, uid int64) error {
+func UnblockIP(db *gorm.DB, ip string, uid int64) error {
 	if ip == "" {
 		return nil
 	}
@@ -87,7 +87,7 @@ func ClearIP(db *gorm.DB, ip string, uid int64) error {
 	return db.Unscoped().Delete(&WAF{}, "ip = ? and block_identifier = ?", ipBinary, uid).Error
 }
 
-func BatchClearIP(db *gorm.DB, ip []string) error {
+func BatchUnblockIP(db *gorm.DB, ip []string) error {
 	if len(ip) < 1 {
 		return nil
 	}
