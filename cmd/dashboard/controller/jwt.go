@@ -101,8 +101,8 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 			return nil, jwt.ErrFailedAuthentication
 		}
 
-		model.ClearIP(singleton.DB, realip, model.BlockIDUnknownUser)
-		model.ClearIP(singleton.DB, realip, int64(user.ID))
+		model.UnblockIP(singleton.DB, realip, model.BlockIDUnknownUser)
+		model.UnblockIP(singleton.DB, realip, int64(user.ID))
 		return utils.Itoa(user.ID), nil
 	}
 }
@@ -172,7 +172,7 @@ func optionalAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 		identity := mw.IdentityHandler(c)
 
 		if identity != nil {
-			model.ClearIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.BlockIDToken)
+			model.UnblockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
 		} else {
 			if err := model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken); err != nil {

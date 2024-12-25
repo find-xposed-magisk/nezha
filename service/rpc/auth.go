@@ -45,7 +45,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 	}
 	singleton.UserLock.RUnlock()
 
-	model.ClearIP(singleton.DB, ip, model.BlockIDgRPC)
+	model.UnblockIP(singleton.DB, ip, model.BlockIDgRPC)
 
 	var clientUUID string
 	if value, ok := md["client_uuid"]; ok {
