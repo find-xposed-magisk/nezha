@@ -81,9 +81,9 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			if maxDuration < 1 {
 				maxDuration = 1
 			}
+			// 只要最后一次检查超出了规则范围 就认为检查未通过
 			if len(points) > 0 && !points[len(points)-1][ruleId] {
 				failCount++
-				break
 			}
 		} else {
 			// 常规报警
@@ -104,10 +104,10 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			// 当70%以上的采样点未通过规则判断时 才认为当前检查未通过
 			if fail/total > 0.7 {
 				failCount++
-				break
 			}
 		}
 	}
-	// 仅当所有检查均未通过时 返回false
+
+	// 仅当所有检查均未通过时 才触发告警
 	return maxDuration, failCount != len(r.Rules)
 }
