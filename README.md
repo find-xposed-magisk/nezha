@@ -62,10 +62,10 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/liuyanxi975" title="刘颜溪"><img src="https://avatars.githubusercontent.com/u/24417037?v=4" width="50;" alt="刘颜溪"/></a>
 <a href="https://github.com/CosmosZ-code" title="CosmosZ-code"><img src="https://avatars.githubusercontent.com/u/81398224?v=4" width="50;" alt="CosmosZ-code"/></a>
 <a href="https://github.com/lvgj-stack" title="Ko no dio"><img src="https://avatars.githubusercontent.com/u/38449861?v=4" width="50;" alt="Ko no dio"/></a>
+<a href="https://github.com/weblate" title="Weblate (bot)"><img src="https://avatars.githubusercontent.com/u/1607653?v=4" width="50;" alt="Weblate (bot)"/></a>
 <a href="https://github.com/hhhkkk520" title="Kris"><img src="https://avatars.githubusercontent.com/u/52115472?v=4" width="50;" alt="Kris"/></a>
 <a href="https://github.com/1ridic" title="1ridic"><img src="https://avatars.githubusercontent.com/u/88495501?v=4" width="50;" alt="1ridic"/></a>
 <a href="https://github.com/Mmx233" title="Mmx"><img src="https://avatars.githubusercontent.com/u/36563672?v=4" width="50;" alt="Mmx"/></a>
-<a href="https://github.com/weblate" title="Weblate (bot)"><img src="https://avatars.githubusercontent.com/u/1607653?v=4" width="50;" alt="Weblate (bot)"/></a>
 <a href="https://github.com/rootmelo92118" title="rootmelo92118"><img src="https://avatars.githubusercontent.com/u/32770959?v=4" width="50;" alt="rootmelo92118"/></a>
 <a href="https://github.com/Moraxyc" title="Moraxyc"><img src="https://avatars.githubusercontent.com/u/69713071?v=4" width="50;" alt="Moraxyc"/></a>
 <a href="https://github.com/zhucaidan" title="zhucaidan"><img src="https://avatars.githubusercontent.com/u/47970938?v=4" width="50;" alt="zhucaidan"/></a>
