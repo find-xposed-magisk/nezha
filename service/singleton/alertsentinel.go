@@ -26,7 +26,7 @@ type NotificationHistory struct {
 var (
 	AlertsLock                    sync.RWMutex
 	Alerts                        []*model.AlertRule
-	alertsStore                   map[uint64]map[uint64][][]bool       // [alert_id][server_id] -> 对应报警规则的检查结果
+	alertsStore                   map[uint64]map[uint64][][]bool       // [alert_id][server_id] -> [timeTick][ruleId] 时间点对应的rule的检查结果
 	alertsPrevState               map[uint64]map[uint64]uint8          // [alert_id][server_id] -> 对应报警规则的上一次报警状态
 	AlertsCycleTransferStatsStore map[uint64]*model.CycleTransferStats // [alert_id] -> 对应报警规则的周期流量统计
 )
