@@ -75,17 +75,15 @@ func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Ser
 func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 	failCount := 0 // 检查未通过的个数
 
-	for i, rule := range r.Rules {
+	for ruleId, rule := range r.Rules {
 		if rule.IsTransferDurationRule() {
 			// 循环区间流量报警
 			if maxDuration < 1 {
 				maxDuration = 1
 			}
-			for j := len(points) - 1; j >= 0; j-- {
-				if !points[j][i] {
-					failCount++
-					break
-				}
+			if len(points) > 0 && !points[len(points)-1][ruleId] {
+				failCount++
+				break
 			}
 		} else {
 			// 常规报警
@@ -96,11 +94,10 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			if len(points) < duration {
 				continue
 			}
-
 			total, fail := 0.0, 0.0
-			for j := len(points) - duration; j < len(points); j++ {
+			for timeTick := len(points) - duration; timeTick < len(points); timeTick++ {
 				total++
-				if !points[j][i] {
+				if !points[timeTick][ruleId] {
 					fail++
 				}
 			}
