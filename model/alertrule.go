@@ -73,7 +73,7 @@ func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Ser
 
 // Check 传入包含当前报警规则下所有type检查结果 返回报警持续时间与是否通过报警检查(通过则返回true)
 func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
-	failCount := 0 // 检查未通过的个数
+	var hasPassedRule bool
 
 	for ruleId, rule := range r.Rules {
 		if rule.IsTransferDurationRule() {
@@ -81,15 +81,21 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			if maxDuration < 1 {
 				maxDuration = 1
 			}
+			if hasPassedRule {
+				continue
+			}
 			// 只要最后一次检查超出了规则范围 就认为检查未通过
-			if len(points) > 0 && !points[len(points)-1][ruleId] {
-				failCount++
+			if len(points) > 0 && points[len(points)-1][ruleId] {
+				hasPassedRule = true
 			}
 		} else {
 			// 常规报警
 			duration := int(rule.Duration)
 			if duration > maxDuration {
 				maxDuration = duration
+			}
+			if hasPassedRule {
+				continue
 			}
 			if len(points) < duration {
 				continue
@@ -102,12 +108,12 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 				}
 			}
 			// 当70%以上的采样点未通过规则判断时 才认为当前检查未通过
-			if fail/total > 0.7 {
-				failCount++
+			if fail/total <= 0.7 {
+				hasPassedRule = true
 			}
 		}
 	}
 
 	// 仅当所有检查均未通过时 才触发告警
-	return maxDuration, failCount != len(r.Rules)
+	return maxDuration, hasPassedRule
 }
