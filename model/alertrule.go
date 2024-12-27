@@ -98,6 +98,8 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 				continue
 			}
 			if len(points) < duration {
+				// 如果采样点数量不足 则认为检查通过
+				hasPassedRule = true
 				continue
 			}
 			total, fail := 0.0, 0.0
