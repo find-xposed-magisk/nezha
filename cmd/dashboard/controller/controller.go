@@ -56,6 +56,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	}
 	api := r.Group("api/v1")
 	api.POST("/login", authMiddleware.LoginHandler)
+	api.GET("/oauth2/:provider", commonHandler(oauth2redirect))
+	api.POST("/oauth2/:provider/callback", commonHandler(oauth2callback(authMiddleware)))
 
 	optionalAuth := api.Group("", optionalAuthMiddleware(authMiddleware))
 	optionalAuth.GET("/ws/server", commonHandler(serverStream))
@@ -79,6 +81,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 
 	auth.GET("/profile", commonHandler(getProfile))
 	auth.POST("/profile", commonHandler(updateProfile))
+	auth.POST("/oauth2/:provider/bind", commonHandler(bindOauth2))
+	auth.POST("/oauth2/:provider/unbind", commonHandler(unbindOauth2))
+
 	auth.GET("/user", adminHandler(listUser))
 	auth.POST("/user", adminHandler(createUser))
 	auth.POST("/batch-delete/user", adminHandler(batchDeleteUser))

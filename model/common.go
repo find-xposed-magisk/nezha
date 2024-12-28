@@ -16,6 +16,10 @@ const (
 	CtxKeyRealIPStr      = "ckri"
 )
 
+const (
+	CacheKeyOauth2State = "cko2s::"
+)
+
 type CtxKeyRealIP struct{}
 type CtxKeyConnectingIP struct{}
 

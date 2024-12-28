@@ -4,6 +4,15 @@ const (
 	ApiErrorUnauthorized = 10001
 )
 
+type Oauth2LoginResponse struct {
+	Redirect string `json:"redirect,omitempty"`
+}
+
+type Oauth2Callback struct {
+	State string `json:"state,omitempty"`
+	Code  string `json:"code,omitempty"`
+}
+
 type LoginRequest struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`

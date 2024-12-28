@@ -17,9 +17,9 @@ import (
 // @Security BearerAuth
 // @Tags common
 // @Produce json
-// @Success 200 {object} model.CommonResponse[model.SettingResponse]
+// @Success 200 {object} model.CommonResponse[model.SettingResponse[model.Config]]
 // @Router /setting [get]
-func listConfig(c *gin.Context) (model.SettingResponse, error) {
+func listConfig(c *gin.Context) (model.SettingResponse[any], error) {
 	u, authorized := c.Get(model.CtxKeyAuthorizedUser)
 	var isAdmin bool
 	if authorized {
@@ -27,29 +27,31 @@ func listConfig(c *gin.Context) (model.SettingResponse, error) {
 		isAdmin = user.Role == model.RoleAdmin
 	}
 
-	conf := model.SettingResponse{
-		Config:            *singleton.Conf,
+	config := *singleton.Conf
+	config.Language = strings.Replace(config.Language, "_", "-", -1)
+
+	conf := model.SettingResponse[any]{
+		Config:            config,
 		Version:           singleton.Version,
 		FrontendTemplates: singleton.FrontendTemplates,
 	}
 
 	if !authorized || !isAdmin {
-		conf = model.SettingResponse{
-			Config: model.Config{
-				SiteName:            conf.SiteName,
-				Language:            conf.Language,
-				CustomCode:          conf.CustomCode,
-				CustomCodeDashboard: conf.CustomCodeDashboard,
-			},
+		configForGuests := model.ConfigForGuests{
+			Language:            config.Language,
+			SiteName:            config.SiteName,
+			CustomCode:          config.CustomCode,
+			CustomCodeDashboard: config.CustomCodeDashboard,
+			Oauth2Providers:     config.Oauth2Providers,
+		}
+		if authorized {
+			config.TLS = singleton.Conf.TLS
+			config.InstallHost = singleton.Conf.InstallHost
+		}
+		conf = model.SettingResponse[any]{
+			Config: configForGuests,
 		}
 	}
-
-	if !isAdmin {
-		conf.Config.TLS = singleton.Conf.TLS
-		conf.Config.InstallHost = singleton.Conf.InstallHost
-	}
-
-	conf.Config.Language = strings.Replace(conf.Config.Language, "_", "-", -1)
 
 	return conf, nil
 }
