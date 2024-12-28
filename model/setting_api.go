@@ -28,8 +28,8 @@ type FrontendTemplate struct {
 	IsOfficial bool   `json:"is_official,omitempty"`
 }
 
-type SettingResponse struct {
-	Config
+type SettingResponse[T any] struct {
+	Config T `json:"config,omitempty"`
 
 	Version           string             `json:"version,omitempty"`
 	FrontendTemplates []FrontendTemplate `json:"frontend_templates,omitempty"`

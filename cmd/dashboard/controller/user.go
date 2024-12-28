@@ -26,9 +26,18 @@ func getProfile(c *gin.Context) (*model.Profile, error) {
 	if !ok {
 		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
+	var ob []model.Oauth2Bind
+	if err := singleton.DB.Where("user_id = ?", auth.(*model.User).ID).Find(&ob).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+	var obMap = make(map[string]string)
+	for _, v := range ob {
+		obMap[v.Provider] = v.OpenID
+	}
 	return &model.Profile{
-		User:    *auth.(*model.User),
-		LoginIP: c.GetString(model.CtxKeyRealIPStr),
+		User:       *auth.(*model.User),
+		LoginIP:    c.GetString(model.CtxKeyRealIPStr),
+		Oauth2Bind: obMap,
 	}, nil
 }
 

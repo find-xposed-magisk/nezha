@@ -15,6 +15,7 @@ const (
 	WAFBlockReasonTypeBruteForceToken
 	WAFBlockReasonTypeAgentAuthFail
 	WAFBlockReasonTypeManual
+	WAFBlockReasonTypeBruteForceOauth2
 )
 
 const (

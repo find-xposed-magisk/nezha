@@ -82,7 +82,7 @@ func InitDBFromPath(path string) {
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
 		model.ServiceHistory{}, model.Cron{}, model.Transfer{}, model.ServerGroupServer{},
 		model.NAT{}, model.DDNSProfile{}, model.NotificationGroupNotification{},
-		model.WAF{})
+		model.WAF{}, model.Oauth2Bind{})
 	if err != nil {
 		panic(err)
 	}

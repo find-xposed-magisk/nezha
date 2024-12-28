@@ -1,8 +1,10 @@
 package model
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,6 +22,17 @@ const (
 	ConfigCoverAll  = iota
 	ConfigCoverIgnoreAll
 )
+
+type ConfigForGuests struct {
+	Language            string   `json:"language"`
+	SiteName            string   `json:"site_name"`
+	CustomCode          string   `json:"custom_code,omitempty"`
+	CustomCodeDashboard string   `json:"custom_code_dashboard,omitempty"`
+	Oauth2Providers     []string `json:"oauth2_providers,omitempty"`
+
+	InstallHost string `json:"install_host,omitempty"`
+	TLS         bool   `json:"tls,omitempty"`
+}
 
 type Config struct {
 	Debug        bool   `mapstructure:"debug" json:"debug,omitempty"`                   // debug模式开关
@@ -51,6 +64,11 @@ type Config struct {
 
 	CustomCode          string `mapstructure:"custom_code" json:"custom_code,omitempty"`
 	CustomCodeDashboard string `mapstructure:"custom_code_dashboard" json:"custom_code_dashboard,omitempty"`
+
+	// oauth2 配置
+	Oauth2 map[string]*Oauth2Config `mapstructure:"oauth2" json:"oauth2,omitempty"`
+	// oauth2 供应商列表，无需配置，自动生成
+	Oauth2Providers []string `yaml:"-" json:"oauth2_providers,omitempty"`
 
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
@@ -131,6 +149,8 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 			return err
 		}
 	}
+
+	c.Oauth2Providers = slices.Collect(maps.Keys(c.Oauth2))
 
 	c.updateIgnoredIPNotificationID()
 	return nil
