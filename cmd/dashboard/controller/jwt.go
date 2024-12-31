@@ -89,10 +89,16 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 
 		var user model.User
 		realip := c.GetString(model.CtxKeyRealIPStr)
+
 		if err := singleton.DB.Select("id", "password").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
 			}
+			return nil, jwt.ErrFailedAuthentication
+		}
+
+		if user.RejectPassword {
+			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			return nil, jwt.ErrFailedAuthentication
 		}
 
