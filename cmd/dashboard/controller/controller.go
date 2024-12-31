@@ -21,6 +21,7 @@ import (
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	docs "github.com/nezhahq/nezha/cmd/dashboard/docs"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -281,9 +282,9 @@ func getUid(c *gin.Context) uint64 {
 }
 
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
-	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string) bool {
+	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string, customStatusCode int) bool {
 		if _, err := os.Stat(path); err == nil {
-			c.File(path)
+			c.FileWithCustomStatusCode(path, customStatusCode)
 			return true
 		}
 		f, err := fs.Open(path)
@@ -298,7 +299,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if fileStat.IsDir() {
 			return false
 		}
-		http.ServeContent(c.Writer, c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker))
+		http.ServeContentCustomStatusCode(c.Writer, c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker), customStatusCode)
 		return true
 	}
 	return func(c *gin.Context) {
@@ -309,29 +310,21 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard") {
 			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard")
 			localFilePath := path.Join(singleton.Conf.AdminTemplate, stripPath)
-			if stripPath == "/" {
-				c.Status(http.StatusOK)
-			}
-			if checkLocalFileOrFs(c, frontendDist, localFilePath) {
+			statusCode := utils.IfOr(stripPath == "/", http.StatusOK, http.StatusNotFound)
+			if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
 				return
-			} else {
-				c.Status(http.StatusNotFound)
 			}
-			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html") {
+			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html", statusCode) {
 				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
 		}
 		localFilePath := path.Join(singleton.Conf.UserTemplate, c.Request.URL.Path)
-		if c.Request.URL.Path == "/" {
-			c.Status(http.StatusOK)
-		}
-		if checkLocalFileOrFs(c, frontendDist, localFilePath) {
+		if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
 			return
-		} else {
-			c.Status(http.StatusNotFound)
 		}
-		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html") {
+		statusCode := utils.IfOr(c.Request.URL.Path == "/", http.StatusOK, http.StatusNotFound)
+		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html", statusCode) {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}
