@@ -72,7 +72,7 @@ func CheckIP(db *gorm.DB, ip string) error {
 
 	now := time.Now().Unix()
 	if powAdd(count, 4, blockTimestamp) > uint64(now) {
-		return errors.New("you are blocked by nezha WAF")
+		return errors.New("you were blocked by nezha WAF")
 	}
 	return nil
 }
