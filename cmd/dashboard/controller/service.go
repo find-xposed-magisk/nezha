@@ -85,7 +85,8 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 
 	singleton.ServerLock.RLock()
 	server, ok := singleton.ServerList[id]
-	if !ok {
+	singleton.ServerLock.RUnlock()
+	if !ok || server == nil {
 		return nil, singleton.Localizer.ErrorT("server not found")
 	}
 
@@ -95,7 +96,6 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 	if server.HideForGuest && !authorized {
 		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
-	singleton.ServerLock.RUnlock()
 
 	var serviceHistories []*model.ServiceHistory
 	if err := singleton.DB.Model(&model.ServiceHistory{}).Select("service_id, created_at, server_id, avg_delay").
