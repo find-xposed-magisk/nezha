@@ -75,6 +75,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 		singleton.ServerList[s.ID] = &s
 		singleton.ServerUUIDToID[clientUUID] = s.ID
 		singleton.ServerLock.Unlock()
+
 		singleton.ReSortServer()
 
 		clientID = s.ID

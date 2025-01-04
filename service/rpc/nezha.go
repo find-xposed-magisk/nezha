@@ -133,17 +133,22 @@ func (s *NezhaHandler) onReportSystemInfo(c context.Context, r *pb.Host) error {
 	singleton.ServerLock.RLock()
 	defer singleton.ServerLock.RUnlock()
 
+	server, ok := singleton.ServerList[clientID]
+	if !ok || server == nil {
+		return fmt.Errorf("server not found")
+	}
+
 	/**
 	 * 这里的 singleton 中的数据都是关机前的旧数据
 	 * 当 agent 重启时，bootTime 变大，agent 端会先上报 host 信息，然后上报 state 信息
 	 * 这是可以借助上报顺序的空档，将停机前的流量统计数据标记下来，加到下一个小时的数据点上
 	 */
-	if singleton.ServerList[clientID].Host != nil && singleton.ServerList[clientID].Host.BootTime < host.BootTime {
-		singleton.ServerList[clientID].PrevTransferInSnapshot = singleton.ServerList[clientID].PrevTransferInSnapshot - int64(singleton.ServerList[clientID].State.NetInTransfer)
-		singleton.ServerList[clientID].PrevTransferOutSnapshot = singleton.ServerList[clientID].PrevTransferOutSnapshot - int64(singleton.ServerList[clientID].State.NetOutTransfer)
+	if server.Host != nil && server.Host.BootTime < host.BootTime {
+		server.PrevTransferInSnapshot = server.PrevTransferInSnapshot - int64(server.State.NetInTransfer)
+		server.PrevTransferOutSnapshot = server.PrevTransferOutSnapshot - int64(server.State.NetOutTransfer)
 	}
 
-	singleton.ServerList[clientID].Host = &host
+	server.Host = &host
 	return nil
 }
 

@@ -160,15 +160,13 @@ func listServerWithServices(c *gin.Context) ([]uint64, error) {
 	for _, id := range serverIdsWithService {
 		singleton.ServerLock.RLock()
 		server, ok := singleton.ServerList[id]
-		if !ok {
-			singleton.ServerLock.RUnlock()
+		singleton.ServerLock.RUnlock()
+		if !ok || server == nil {
 			return nil, singleton.Localizer.ErrorT("server not found")
 		}
-
 		if !server.HideForGuest || authorized {
 			ret = append(ret, id)
 		}
-		singleton.ServerLock.RUnlock()
 	}
 
 	return ret, nil
