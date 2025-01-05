@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -285,31 +286,10 @@ func getUid(c *gin.Context) uint64 {
 	return user.ID
 }
 
-type ginCustomWriter struct {
-	gin.ResponseWriter
-
-	customCode int
-}
-
-func newCustomWriter(c *gin.Context, code int) *ginCustomWriter {
-	return &ginCustomWriter{
-		ResponseWriter: c.Writer,
-		customCode:     code,
-	}
-}
-
-func (w *ginCustomWriter) WriteHeader(code int) {
-	w.ResponseWriter.WriteHeader(w.customCode)
-}
-
-func fileWithCustomStatusCode(c *gin.Context, filepath string, customCode int) {
-	http.ServeFile(newCustomWriter(c, customCode), c.Request, filepath)
-}
-
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string, customStatusCode int) bool {
 		if _, err := os.Stat(path); err == nil {
-			fileWithCustomStatusCode(c, path, customStatusCode)
+			http.ServeFile(utils.NewGinCustomWriter(c, customStatusCode), c.Request, path)
 			return true
 		}
 		f, err := fs.Open(path)
@@ -324,22 +304,61 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if fileStat.IsDir() {
 			return false
 		}
-		http.ServeContent(newCustomWriter(c, customStatusCode), c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker))
+		http.ServeContent(utils.NewGinCustomWriter(c, customStatusCode), c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker))
 		return true
 	}
+
+	frontendPageUrlRegistry := []*regexp.Regexp{
+		// official user frontend
+		regexp.MustCompile(`^/$`),
+		regexp.MustCompile(`^/server/\d*$`),
+		// backend frontend
+		regexp.MustCompile(`^/dashboard/$`),
+		regexp.MustCompile(`^/dashboard/login$`),
+		regexp.MustCompile(`^/dashboard/service$`),
+		regexp.MustCompile(`^/dashboard/cron$`),
+		regexp.MustCompile(`^/dashboard/notification$`),
+		regexp.MustCompile(`^/dashboard/alert-rule$`),
+		regexp.MustCompile(`^/dashboard/ddns$`),
+		regexp.MustCompile(`^/dashboard/nat$`),
+		regexp.MustCompile(`^/dashboard/server-group$`),
+		regexp.MustCompile(`^/dashboard/notification-group$`),
+		regexp.MustCompile(`^/dashboard/profile$`),
+		regexp.MustCompile(`^/dashboard/settings$`),
+		regexp.MustCompile(`^/dashboard/settings/user$`),
+		regexp.MustCompile(`^/dashboard/settings/online-user$`),
+		regexp.MustCompile(`^/dashboard/settings/waf$`),
+	}
+
+	getFallbackStatusCode := func(path string) int {
+		for _, reg := range frontendPageUrlRegistry {
+			if reg.MatchString(path) {
+				return http.StatusOK
+			}
+		}
+		return http.StatusNotFound
+	}
+
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			return
 		}
+
+		// redirect for /dashboard to /dashboard/
+		if c.Request.URL.Path == "/dashboard" {
+			c.Redirect(http.StatusMovedPermanently, "/dashboard/")
+			return
+		}
+
+		fallbackStatusCode := getFallbackStatusCode(c.Request.URL.Path)
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard") {
 			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard")
 			localFilePath := path.Join(singleton.Conf.AdminTemplate, stripPath)
-			statusCode := utils.IfOr(stripPath == "/", http.StatusOK, http.StatusNotFound)
 			if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
 				return
 			}
-			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html", statusCode) {
+			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html", fallbackStatusCode) {
 				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
@@ -348,8 +367,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
 			return
 		}
-		statusCode := utils.IfOr(c.Request.URL.Path == "/", http.StatusOK, http.StatusNotFound)
-		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html", statusCode) {
+		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html", fallbackStatusCode) {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}
