@@ -45,8 +45,8 @@ func listConfig(c *gin.Context) (model.SettingResponse[any], error) {
 			Oauth2Providers:     config.Oauth2Providers,
 		}
 		if authorized {
-			config.TLS = singleton.Conf.TLS
-			config.InstallHost = singleton.Conf.InstallHost
+			configForGuests.TLS = singleton.Conf.TLS
+			configForGuests.InstallHost = singleton.Conf.InstallHost
 		}
 		conf = model.SettingResponse[any]{
 			Config: configForGuests,
