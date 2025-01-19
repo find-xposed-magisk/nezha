@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"iter"
 
 	"github.com/tidwall/gjson"
 )
@@ -10,6 +11,8 @@ var (
 	ErrGjsonNotFound  = errors.New("specified path does not exist")
 	ErrGjsonWrongType = errors.New("wrong type")
 )
+
+var emptyIterator = func(yield func(string, string) bool) {}
 
 func GjsonGet(json []byte, path string) (gjson.Result, error) {
 	result := gjson.GetBytes(json, path)
@@ -20,21 +23,19 @@ func GjsonGet(json []byte, path string) (gjson.Result, error) {
 	return result, nil
 }
 
-func GjsonParseStringMap(jsonObject string) (map[string]string, error) {
-	if jsonObject == "" {
-		return nil, nil
+func GjsonIter(json string) (iter.Seq2[string, string], error) {
+	if json == "" {
+		return emptyIterator, nil
 	}
 
-	result := gjson.Parse(jsonObject)
+	result := gjson.Parse(json)
 	if !result.IsObject() {
 		return nil, ErrGjsonWrongType
 	}
 
-	ret := make(map[string]string)
-	result.ForEach(func(key, value gjson.Result) bool {
-		ret[key.String()] = value.String()
-		return true
-	})
-
-	return ret, nil
+	return func(yield func(string, string) bool) {
+		result.ForEach(func(k, v gjson.Result) bool {
+			return yield(k.String(), v.String())
+		})
+	}, nil
 }
