@@ -13,12 +13,14 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ory/graceful"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/nezhahq/nezha/cmd/dashboard/controller"
+	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/cmd/dashboard/rpc"
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/proto"
@@ -147,6 +149,11 @@ func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		natConfig := singleton.GetNATConfigByDomain(r.Host)
 		if natConfig != nil {
+			if !natConfig.Enabled {
+				c, _ := gin.CreateTestContext(w)
+				waf.ShowBlockPage(c, fmt.Errorf("nat host %s is disabled", natConfig.Domain))
+				return
+			}
 			rpc.ServeNAT(w, r, natConfig)
 			return
 		}
