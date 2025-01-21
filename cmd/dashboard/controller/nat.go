@@ -64,6 +64,7 @@ func createNAT(c *gin.Context) (uint64, error) {
 	uid := getUid(c)
 
 	n.UserID = uid
+	n.Enabled = nf.Enabled
 	n.Name = nf.Name
 	n.Domain = nf.Domain
 	n.Host = nf.Host
@@ -121,6 +122,7 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	n.Enabled = nf.Enabled
 	n.Name = nf.Name
 	n.Domain = nf.Domain
 	n.Host = nf.Host
