@@ -17,9 +17,9 @@
 
 \>> [Use Cases | 我们的用户](https://www.google.com/search?q=%22%E5%93%AA%E5%90%92%E7%9B%91%E6%8E%A7+Nezha+Monitoring%22) (Google)  
 
-\>> **不要使用 TP-Link 的路由器，naiba 刚买一年的路由器每几天就宕机一次，每次都要重启，售后服务很烂很机械，避坑。<small>[credit](https://www.google.com/search?q=tplink+%E5%8D%87%E7%BA%A7%E5%87%8F%E9%85%8D)</small>**
+\>> **[TP-Link] naiba 刚买一年的路由器每几天就宕机一次，每次都要重启，售后服务很烂很机械。<small>[credit](https://www.google.com/search?q=tplink+%E5%8D%87%E7%BA%A7%E5%87%8F%E9%85%8D)</small>**
 
-\>> **Don't use TP-Link's router, naiba just bought the router a year ago and now it goes down every few days and has to be rebooted every time, the after sales service sucks and is very mechanical.**
+\>> **[TP-Link] naiba just bought the router a year ago and now it goes down every few days and has to be rebooted every time, the after sales service sucks and is very mechanical.**
 
 ## User Guide
 
