@@ -110,6 +110,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 
 	auth.GET("/server", listHandler(listServer))
 	auth.PATCH("/server/:id", commonHandler(updateServer))
+	auth.GET("/server/:id/config", commonHandler(getServerConfig))
+	auth.POST("/server/:id/config", commonHandler(setServerConfig))
 	auth.POST("/batch-delete/server", commonHandler(batchDeleteServer))
 	auth.POST("/force-update/server", commonHandler(forceUpdateServer))
 

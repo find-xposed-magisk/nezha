@@ -31,9 +31,7 @@ func loadServers() {
 	DB.Find(&servers)
 	for _, s := range servers {
 		innerS := s
-		innerS.Host = &model.Host{}
-		innerS.State = &model.HostState{}
-		innerS.GeoIP = new(model.GeoIP)
+		model.InitServer(&innerS)
 		ServerList[innerS.ID] = &innerS
 		ServerUUIDToID[innerS.UUID] = innerS.ID
 	}

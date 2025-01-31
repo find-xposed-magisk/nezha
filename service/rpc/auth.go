@@ -67,9 +67,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 		if err := singleton.DB.Create(&s).Error; err != nil {
 			return 0, status.Error(codes.Unauthenticated, err.Error())
 		}
-		s.Host = &model.Host{}
-		s.State = &model.HostState{}
-		s.GeoIP = &model.GeoIP{}
+		model.InitServer(&s)
 
 		singleton.ServerLock.Lock()
 		singleton.ServerList[s.ID] = &s
