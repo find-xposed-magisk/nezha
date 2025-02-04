@@ -2,6 +2,7 @@ package controller
 
 import (
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -182,15 +183,15 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 // @Accept json
 // @param request body []uint64 true "id list"
 // @Produce json
-// @Success 200 {object} model.CommonResponse[model.ForceUpdateResponse]
+// @Success 200 {object} model.CommonResponse[model.ServerTaskResponse]
 // @Router /force-update/server [post]
-func forceUpdateServer(c *gin.Context) (*model.ForceUpdateResponse, error) {
+func forceUpdateServer(c *gin.Context) (*model.ServerTaskResponse, error) {
 	var forceUpdateServers []uint64
 	if err := c.ShouldBindJSON(&forceUpdateServers); err != nil {
 		return nil, err
 	}
 
-	forceUpdateResp := new(model.ForceUpdateResponse)
+	forceUpdateResp := new(model.ServerTaskResponse)
 
 	for _, sid := range forceUpdateServers {
 		singleton.ServerLock.RLock()
@@ -223,7 +224,7 @@ func forceUpdateServer(c *gin.Context) (*model.ForceUpdateResponse, error) {
 // @Tags auth required
 // @Produce json
 // @Success 200 {object} model.CommonResponse[string]
-// @Router /server/{id}/config [get]
+// @Router /server/config/{id} [get]
 func getServerConfig(c *gin.Context) (string, error) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -273,40 +274,66 @@ func getServerConfig(c *gin.Context) (string, error) {
 // @Description Set server config
 // @Tags auth required
 // @Accept json
-// @param request body string true "config"
+// @Param body body model.ServerConfigForm true "ServerConfigForm"
 // @Produce json
-// @Success 200 {object} model.CommonResponse[any]
-// @Router /server/{id}/config [post]
-func setServerConfig(c *gin.Context) (any, error) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		return "", err
-	}
-
-	var configRaw string
-	if err := c.ShouldBindJSON(&configRaw); err != nil {
+// @Success 200 {object} model.CommonResponse[model.ServerTaskResponse]
+// @Router /server/config [post]
+func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
+	var configForm model.ServerConfigForm
+	if err := c.ShouldBindJSON(&configForm); err != nil {
 		return nil, err
 	}
 
+	var resp model.ServerTaskResponse
 	singleton.ServerLock.RLock()
-	s, ok := singleton.ServerList[id]
-	if !ok || s.TaskStream == nil {
-		singleton.ServerLock.RUnlock()
-		return "", nil
+	servers := make([]*model.Server, 0, len(configForm.Servers))
+	for _, sid := range configForm.Servers {
+		if s, ok := singleton.ServerList[sid]; ok {
+			if !s.HasPermission(c) {
+				singleton.ServerLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+			if s.TaskStream == nil {
+				resp.Offline = append(resp.Offline, s.ID)
+				continue
+			}
+			servers = append(servers, s)
+		}
 	}
 	singleton.ServerLock.RUnlock()
 
-	if !s.HasPermission(c) {
-		return "", singleton.Localizer.ErrorT("permission denied")
+	var wg sync.WaitGroup
+	var respMu sync.Mutex
+
+	for i := 0; i < len(servers); i += 10 {
+		end := i + 10
+		if end > len(servers) {
+			end = len(servers)
+		}
+		group := servers[i:end]
+
+		wg.Add(1)
+		go func(srvGroup []*model.Server) {
+			defer wg.Done()
+			for _, s := range srvGroup {
+				// Create and send the task.
+				task := &pb.Task{
+					Type: model.TaskTypeApplyConfig,
+					Data: configForm.Config,
+				}
+				if err := s.TaskStream.Send(task); err != nil {
+					respMu.Lock()
+					resp.Failure = append(resp.Failure, s.ID)
+					respMu.Unlock()
+					continue
+				}
+				respMu.Lock()
+				resp.Success = append(resp.Success, s.ID)
+				respMu.Unlock()
+			}
+		}(group)
 	}
 
-	if err := s.TaskStream.Send(&pb.Task{
-		Type: model.TaskTypeApplyConfig,
-		Data: configRaw,
-	}); err != nil {
-		return "", err
-	}
-
-	return nil, nil
+	wg.Wait()
+	return &resp, nil
 }

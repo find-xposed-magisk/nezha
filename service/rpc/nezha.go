@@ -44,9 +44,9 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		return err
 	}
 
-	singleton.ServerLock.RLock()
+	singleton.ServerLock.Lock()
 	singleton.ServerList[clientID].TaskStream = stream
-	singleton.ServerLock.RUnlock()
+	singleton.ServerLock.Unlock()
 
 	var result *pb.TaskResult
 	for {
