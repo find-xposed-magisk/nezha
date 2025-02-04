@@ -270,7 +270,7 @@ func SendNotification(notificationGroupID uint64, desc string, muteLabel *string
 		if err := ns.Send(desc); err != nil {
 			log.Printf("NEZHA>> Sending notification to %s failed: %v", n.Name, err)
 		} else {
-			log.Printf("NEZHA>> Sending notification to %s succeed", n.Name)
+			log.Printf("NEZHA>> Sending notification to %s succeeded", n.Name)
 		}
 	}
 }

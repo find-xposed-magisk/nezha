@@ -31,7 +31,12 @@ type ServerForm struct {
 	OverrideDDNSDomains map[uint64][]string `json:"override_ddns_domains,omitempty" validate:"optional"`
 }
 
-type ForceUpdateResponse struct {
+type ServerConfigForm struct {
+	Servers []uint64 `json:"servers,omitempty"`
+	Config  string   `json:"config,omitempty"`
+}
+
+type ServerTaskResponse struct {
 	Success []uint64 `json:"success,omitempty" validate:"optional"`
 	Failure []uint64 `json:"failure,omitempty" validate:"optional"`
 	Offline []uint64 `json:"offline,omitempty" validate:"optional"`

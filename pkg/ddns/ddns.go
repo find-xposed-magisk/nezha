@@ -54,7 +54,7 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 			if err := provider.updateDomain(domain); err != nil {
 				log.Printf("NEZHA>> Failed to update DNS record of domain %s: %v", domain, err)
 			} else {
-				log.Printf("NEZHA>> Update DNS record of domain %s succeed", domain)
+				log.Printf("NEZHA>> Update DNS record of domain %s succeeded", domain)
 				break
 			}
 		}
