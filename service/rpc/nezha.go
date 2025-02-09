@@ -296,5 +296,5 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 	// 将地区码写入到 Host
 	server.GeoIP = &geoip
 
-	return &pb.GeoIP{Ip: nil, CountryCode: location}, nil
+	return &pb.GeoIP{Ip: nil, CountryCode: location, DashboardBootTime: singleton.DashboardBootTime}, nil
 }
