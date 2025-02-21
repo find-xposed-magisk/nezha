@@ -63,12 +63,12 @@ func initSystem() {
 	singleton.LoadSingleton()
 
 	// 每天的3:30 对 监控记录 和 流量记录 进行清理
-	if _, err := singleton.Cron.AddFunc("0 30 3 * * *", singleton.CleanServiceHistory); err != nil {
+	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanServiceHistory); err != nil {
 		panic(err)
 	}
 
 	// 每小时对流量记录进行打点
-	if _, err := singleton.Cron.AddFunc("0 0 * * * *", singleton.RecordTransferHourlyUsage); err != nil {
+	if _, err := singleton.CronShared.AddFunc("0 0 * * * *", singleton.RecordTransferHourlyUsage); err != nil {
 		panic(err)
 	}
 }
@@ -118,11 +118,15 @@ func main() {
 	}
 
 	singleton.CleanServiceHistory()
-	serviceSentinelDispatchBus := make(chan model.Service) // 用于传递服务监控任务信息的channel
+	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
 	rpc.DispatchKeepalive()
 	go rpc.DispatchTask(serviceSentinelDispatchBus)
 	go singleton.AlertSentinelStart()
-	singleton.NewServiceSentinel(serviceSentinelDispatchBus)
+	singleton.ServiceSentinelShared, err = singleton.NewServiceSentinel(
+		serviceSentinelDispatchBus, singleton.ServerShared, singleton.NotificationShared, singleton.CronShared)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	grpcHandler := rpc.ServeRPC()
 	httpHandler := controller.ServeWeb(frontendDist)
@@ -147,7 +151,7 @@ func main() {
 
 func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		natConfig := singleton.GetNATConfigByDomain(r.Host)
+		natConfig := singleton.NATShared.GetNATConfigByDomain(r.Host)
 		if natConfig != nil {
 			if !natConfig.Enabled {
 				c, _ := gin.CreateTestContext(w)

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -24,10 +25,8 @@ import (
 func listDDNS(c *gin.Context) ([]*model.DDNSProfile, error) {
 	var ddnsProfiles []*model.DDNSProfile
 
-	singleton.DDNSListLock.RLock()
-	defer singleton.DDNSListLock.RUnlock()
-
-	if err := copier.Copy(&ddnsProfiles, &singleton.DDNSList); err != nil {
+	list := singleton.DDNSShared.GetSortedList()
+	if err := copier.Copy(&ddnsProfiles, &list); err != nil {
 		return nil, err
 	}
 
@@ -87,9 +86,7 @@ func createDDNS(c *gin.Context) (uint64, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	singleton.OnDDNSUpdate(&p)
-	singleton.UpdateDDNSList()
-
+	singleton.DDNSShared.Update(&p)
 	return p.ID, nil
 }
 
@@ -160,8 +157,7 @@ func updateDDNS(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnDDNSUpdate(&p)
-	singleton.UpdateDDNSList()
+	singleton.DDNSShared.Update(&p)
 
 	return nil, nil
 }
@@ -184,24 +180,15 @@ func batchDeleteDDNS(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.DDNSCacheLock.RLock()
-	for _, pid := range ddnsConfigs {
-		if p, ok := singleton.DDNSCache[pid]; ok {
-			if !p.HasPermission(c) {
-				singleton.DDNSCacheLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.DDNSShared.CheckPermission(c, slices.Values(ddnsConfigs)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.DDNSCacheLock.RUnlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.DDNSProfile{}, "id in (?)", ddnsConfigs).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnDDNSDelete(ddnsConfigs)
-	singleton.UpdateDDNSList()
-
+	singleton.DDNSShared.Delete(ddnsConfigs)
 	return nil, nil
 }
 
