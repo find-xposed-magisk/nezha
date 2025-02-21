@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -26,11 +27,10 @@ import (
 // @Success 200 {object} model.CommonResponse[[]model.Server]
 // @Router /server [get]
 func listServer(c *gin.Context) ([]*model.Server, error) {
-	singleton.SortedServerLock.RLock()
-	defer singleton.SortedServerLock.RUnlock()
+	slist := singleton.ServerShared.GetSortedList()
 
 	var ssl []*model.Server
-	if err := copier.Copy(&ssl, &singleton.SortedServerList); err != nil {
+	if err := copier.Copy(&ssl, &slist); err != nil {
 		return nil, err
 	}
 	return ssl, nil
@@ -59,16 +59,9 @@ func updateServer(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.DDNSCacheLock.RLock()
-	for _, pid := range sf.DDNSProfiles {
-		if p, ok := singleton.DDNSCache[pid]; ok {
-			if !p.HasPermission(c) {
-				singleton.DDNSCacheLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.DDNSShared.CheckPermission(c, slices.Values(sf.DDNSProfiles)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.DDNSCacheLock.RUnlock()
 
 	var s model.Server
 	if err := singleton.DB.First(&s, id).Error; err != nil {
@@ -104,11 +97,9 @@ func updateServer(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.ServerLock.Lock()
-	s.CopyFromRunningServer(singleton.ServerList[s.ID])
-	singleton.ServerList[s.ID] = &s
-	singleton.ServerLock.Unlock()
-	singleton.ReSortServer()
+	rs, _ := singleton.ServerShared.Get(s.ID)
+	s.CopyFromRunningServer(rs)
+	singleton.ServerShared.Update(&s, "")
 
 	return nil, nil
 }
@@ -130,16 +121,9 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.ServerLock.RLock()
-	for _, sid := range servers {
-		if s, ok := singleton.ServerList[sid]; ok {
-			if !s.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.ServerShared.CheckPermission(c, slices.Values(servers)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.ServerLock.RUnlock()
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", servers).Error; err != nil {
@@ -168,9 +152,7 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	singleton.DB.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", servers)
 	singleton.AlertsLock.Unlock()
 
-	singleton.OnServerDelete(servers)
-	singleton.ReSortServer()
-
+	singleton.ServerShared.Delete(servers)
 	return nil, nil
 }
 
@@ -194,9 +176,7 @@ func forceUpdateServer(c *gin.Context) (*model.ServerTaskResponse, error) {
 	forceUpdateResp := new(model.ServerTaskResponse)
 
 	for _, sid := range forceUpdateServers {
-		singleton.ServerLock.RLock()
-		server := singleton.ServerList[sid]
-		singleton.ServerLock.RUnlock()
+		server, _ := singleton.ServerShared.Get(sid)
 		if server != nil && server.TaskStream != nil {
 			if !server.HasPermission(c) {
 				return nil, singleton.Localizer.ErrorT("permission denied")
@@ -232,13 +212,10 @@ func getServerConfig(c *gin.Context) (string, error) {
 		return "", err
 	}
 
-	singleton.ServerLock.RLock()
-	s, ok := singleton.ServerList[id]
+	s, ok := singleton.ServerShared.Get(id)
 	if !ok || s.TaskStream == nil {
-		singleton.ServerLock.RUnlock()
 		return "", nil
 	}
-	singleton.ServerLock.RUnlock()
 
 	if !s.HasPermission(c) {
 		return "", singleton.Localizer.ErrorT("permission denied")
@@ -285,12 +262,11 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	}
 
 	var resp model.ServerTaskResponse
-	singleton.ServerLock.RLock()
+	slist := singleton.ServerShared.GetList()
 	servers := make([]*model.Server, 0, len(configForm.Servers))
 	for _, sid := range configForm.Servers {
-		if s, ok := singleton.ServerList[sid]; ok {
+		if s, ok := slist[sid]; ok {
 			if !s.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 			if s.TaskStream == nil {
@@ -300,7 +276,6 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 			servers = append(servers, s)
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	var wg sync.WaitGroup
 	var respMu sync.Mutex

@@ -10,7 +10,7 @@ import (
 
 var (
 	OnlineUserMap     = make(map[string]*model.OnlineUser)
-	OnlineUserMapLock = new(sync.Mutex)
+	OnlineUserMapLock sync.Mutex
 )
 
 func AddOnlineUser(connId string, user *model.OnlineUser) {

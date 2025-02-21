@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -21,11 +22,10 @@ import (
 // @Success 200 {object} model.CommonResponse[[]model.Cron]
 // @Router /cron [get]
 func listCron(c *gin.Context) ([]*model.Cron, error) {
-	singleton.CronLock.RLock()
-	defer singleton.CronLock.RUnlock()
+	slist := singleton.CronShared.GetSortedList()
 
 	var cr []*model.Cron
-	if err := copier.Copy(&cr, &singleton.CronList); err != nil {
+	if err := copier.Copy(&cr, &slist); err != nil {
 		return nil, err
 	}
 	return cr, nil
@@ -50,16 +50,9 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	singleton.ServerLock.RLock()
-	for _, sid := range cf.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
-			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
-				return 0, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.ServerShared.CheckPermission(c, slices.Values(cf.Servers)) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.ServerLock.RUnlock()
 
 	cr.UserID = getUid(c)
 	cr.TaskType = cf.TaskType
@@ -78,7 +71,7 @@ func createCron(c *gin.Context) (uint64, error) {
 	// 对于计划任务类型，需要更新CronJob
 	var err error
 	if cf.TaskType == model.CronTypeCronTask {
-		if cr.CronJobID, err = singleton.Cron.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
+		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
 			return 0, err
 		}
 	}
@@ -87,8 +80,7 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	singleton.OnRefreshOrAddCron(&cr)
-	singleton.UpdateCronList()
+	singleton.CronShared.Update(&cr)
 	return cr.ID, nil
 }
 
@@ -116,16 +108,9 @@ func updateCron(c *gin.Context) (any, error) {
 		return 0, err
 	}
 
-	singleton.ServerLock.RLock()
-	for _, sid := range cf.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
-			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.ServerShared.CheckPermission(c, slices.Values(cf.Servers)) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.ServerLock.RUnlock()
 
 	var cr model.Cron
 	if err := singleton.DB.First(&cr, id).Error; err != nil {
@@ -151,7 +136,7 @@ func updateCron(c *gin.Context) (any, error) {
 
 	// 对于计划任务类型，需要更新CronJob
 	if cf.TaskType == model.CronTypeCronTask {
-		if cr.CronJobID, err = singleton.Cron.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
+		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
 			return nil, err
 		}
 	}
@@ -160,8 +145,7 @@ func updateCron(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnRefreshOrAddCron(&cr)
-	singleton.UpdateCronList()
+	singleton.CronShared.Update(&cr)
 	return nil, nil
 }
 
@@ -183,13 +167,10 @@ func manualTriggerCron(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.CronLock.RLock()
-	cr, ok := singleton.Crons[id]
+	cr, ok := singleton.CronShared.Get(id)
 	if !ok {
-		singleton.CronLock.RUnlock()
 		return nil, singleton.Localizer.ErrorT("task id %d does not exist", id)
 	}
-	singleton.CronLock.RUnlock()
 
 	if !cr.HasPermission(c) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
@@ -216,22 +197,14 @@ func batchDeleteCron(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.CronLock.RLock()
-	for _, crID := range cr {
-		if crn, ok := singleton.Crons[crID]; ok {
-			if !crn.HasPermission(c) {
-				singleton.CronLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.CronShared.CheckPermission(c, slices.Values(cr)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.CronLock.RUnlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.Cron{}, "id in (?)", cr).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnDeleteCron(cr)
-	singleton.UpdateCronList()
+	singleton.CronShared.Delete(cr)
 	return nil, nil
 }

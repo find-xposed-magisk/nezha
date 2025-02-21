@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -55,11 +57,9 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 // @Success 200 {object} model.CommonResponse[[]model.Service]
 // @Router /service [get]
 func listService(c *gin.Context) ([]*model.Service, error) {
-	singleton.ServiceSentinelShared.ServicesLock.RLock()
-	defer singleton.ServiceSentinelShared.ServicesLock.RUnlock()
-
 	var ss []*model.Service
-	if err := copier.Copy(&ss, singleton.ServiceSentinelShared.ServiceList); err != nil {
+	ssl := singleton.ServiceSentinelShared.GetSortedList()
+	if err := copier.Copy(&ss, &ssl); err != nil {
 		return nil, err
 	}
 
@@ -83,9 +83,8 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, err
 	}
 
-	singleton.ServerLock.RLock()
-	server, ok := singleton.ServerList[id]
-	singleton.ServerLock.RUnlock()
+	m := singleton.ServerShared.GetList()
+	server, ok := m[id]
 	if !ok || server == nil {
 		return nil, singleton.Localizer.ErrorT("server not found")
 	}
@@ -104,21 +103,17 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, err
 	}
 
-	singleton.ServiceSentinelShared.ServicesLock.RLock()
-	defer singleton.ServiceSentinelShared.ServicesLock.RUnlock()
-	singleton.ServerLock.RLock()
-	defer singleton.ServerLock.RUnlock()
-
 	var sortedServiceIDs []uint64
 	resultMap := make(map[uint64]*model.ServiceInfos)
 	for _, history := range serviceHistories {
 		infos, ok := resultMap[history.ServiceID]
+		service, _ := singleton.ServiceSentinelShared.Get(history.ServiceID)
 		if !ok {
 			infos = &model.ServiceInfos{
 				ServiceID:   history.ServiceID,
 				ServerID:    history.ServerID,
-				ServiceName: singleton.ServiceSentinelShared.Services[history.ServiceID].Name,
-				ServerName:  singleton.ServerList[history.ServerID].Name,
+				ServiceName: service.Name,
+				ServerName:  m[history.ServerID].Name,
 			}
 			resultMap[history.ServiceID] = infos
 			sortedServiceIDs = append(sortedServiceIDs, history.ServiceID)
@@ -158,9 +153,7 @@ func listServerWithServices(c *gin.Context) ([]uint64, error) {
 
 	var ret []uint64
 	for _, id := range serverIdsWithService {
-		singleton.ServerLock.RLock()
-		server, ok := singleton.ServerList[id]
-		singleton.ServerLock.RUnlock()
+		server, ok := singleton.ServerShared.Get(id)
 		if !ok || server == nil {
 			return nil, singleton.Localizer.ErrorT("server not found")
 		}
@@ -232,7 +225,7 @@ func createService(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	if err := singleton.ServiceSentinelShared.OnServiceUpdate(m); err != nil {
+	if err := singleton.ServiceSentinelShared.Update(&m); err != nil {
 		return 0, err
 	}
 
@@ -309,7 +302,7 @@ func updateService(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if err := singleton.ServiceSentinelShared.OnServiceUpdate(m); err != nil {
+	if err := singleton.ServiceSentinelShared.Update(&m); err != nil {
 		return nil, err
 	}
 
@@ -334,16 +327,9 @@ func batchDeleteService(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.ServiceSentinelShared.ServicesLock.RLock()
-	for _, id := range ids {
-		if ss, ok := singleton.ServiceSentinelShared.Services[id]; ok {
-			if !ss.HasPermission(c) {
-				singleton.ServiceSentinelShared.ServicesLock.RUnlock()
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.ServiceSentinelShared.CheckPermission(c, slices.Values(ids)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
-	singleton.ServiceSentinelShared.ServicesLock.RUnlock()
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error; err != nil {
@@ -354,21 +340,14 @@ func batchDeleteService(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	singleton.ServiceSentinelShared.OnServiceDelete(ids)
+	singleton.ServiceSentinelShared.Delete(ids)
 	singleton.ServiceSentinelShared.UpdateServiceList()
 	return nil, nil
 }
 
 func validateServers(c *gin.Context, ss *model.Service) error {
-	singleton.ServerLock.RLock()
-	defer singleton.ServerLock.RUnlock()
-
-	for s := range ss.SkipServers {
-		if server, ok := singleton.ServerList[s]; ok {
-			if !server.HasPermission(c) {
-				return singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !singleton.ServerShared.CheckPermission(c, maps.Keys(ss.SkipServers)) {
+		return singleton.Localizer.ErrorT("permission denied")
 	}
 
 	return nil

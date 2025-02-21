@@ -2,9 +2,14 @@ package singleton
 
 import (
 	_ "embed"
+	"iter"
 	"log"
+	"maps"
+	"slices"
+	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
 	"gopkg.in/yaml.v3"
 	"gorm.io/driver/sqlite"
@@ -23,6 +28,13 @@ var (
 	Loc               *time.Location
 	FrontendTemplates []model.FrontendTemplate
 	DashboardBootTime = uint64(time.Now().Unix())
+
+	ServerShared          *ServerClass
+	ServiceSentinelShared *ServiceSentinel
+	DDNSShared            *DDNSClass
+	NotificationShared    *NotificationClass
+	NATShared             *NATClass
+	CronShared            *CronClass
 )
 
 //go:embed frontend-templates.yaml
@@ -40,13 +52,13 @@ func InitTimezoneAndCache() {
 
 // LoadSingleton 加载子服务并执行
 func LoadSingleton() {
-	initUser()          // 加载用户ID绑定表
-	initI18n()          // 加载本地化服务
-	loadNotifications() // 加载通知服务
-	loadServers()       // 加载服务器列表
-	loadCronTasks()     // 加载定时任务
-	initNAT()
-	initDDNS()
+	initUser()                                  // 加载用户ID绑定表
+	initI18n()                                  // 加载本地化服务
+	NotificationShared = NewNotificationClass() // 加载通知服务
+	ServerShared = NewServerClass()             // 加载服务器列表
+	CronShared = NewCronClass()                 // 加载定时任务
+	NATShared = NewNATClass()
+	DDNSShared = NewDDNSClass()
 }
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
@@ -90,12 +102,13 @@ func InitDBFromPath(path string) {
 
 // RecordTransferHourlyUsage 对流量记录进行打点
 func RecordTransferHourlyUsage() {
-	ServerLock.Lock()
-	defer ServerLock.Unlock()
+	ServerShared.listMu.RLock()
+	defer ServerShared.listMu.RUnlock()
+
 	now := time.Now()
 	nowTrimSeconds := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
 	var txs []model.Transfer
-	for id, server := range ServerList {
+	for id, server := range ServerShared.list {
 		tx := model.Transfer{
 			ServerID: id,
 			In:       utils.Uint64SubInt64(server.State.NetInTransfer, server.PrevTransferInSnapshot),
@@ -170,4 +183,59 @@ func IPDesensitize(ip string) string {
 		return ip
 	}
 	return utils.IPDesensitize(ip)
+}
+
+type class[K comparable, V model.CommonInterface] struct {
+	list   map[K]V
+	listMu sync.RWMutex
+
+	sortedList   []V
+	sortedListMu sync.RWMutex
+}
+
+func (c *class[K, V]) Get(id K) (s V, ok bool) {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	s, ok = c.list[id]
+	return
+}
+
+func (c *class[K, V]) GetList() map[K]V {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	return maps.Clone(c.list)
+}
+
+func (c *class[K, V]) GetSortedList() []V {
+	c.sortedListMu.RLock()
+	defer c.sortedListMu.RUnlock()
+
+	return slices.Clone(c.sortedList)
+}
+
+func (c *class[K, V]) Range(fn func(k K, v V) bool) {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	for k, v := range c.list {
+		if !fn(k, v) {
+			break
+		}
+	}
+}
+
+func (c *class[K, V]) CheckPermission(ctx *gin.Context, idList iter.Seq[K]) bool {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	for id := range idList {
+		if s, ok := c.list[id]; ok {
+			if !s.HasPermission(ctx) {
+				return false
+			}
+		}
+	}
+	return true
 }

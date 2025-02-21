@@ -19,11 +19,6 @@ var (
 	customDNSServers []string
 )
 
-type IP struct {
-	Ipv4Addr string
-	Ipv6Addr string
-}
-
 type Provider struct {
 	ctx        context.Context
 	ipAddr     string
@@ -32,7 +27,7 @@ type Provider struct {
 	zone       string
 
 	DDNSProfile *model.DDNSProfile
-	IPAddrs     *IP
+	IPAddrs     *model.IP
 	Setter      libdns.RecordSetter
 }
 
@@ -71,7 +66,7 @@ func (provider *Provider) updateDomain(domain string) error {
 	// 当IPv4和IPv6同时成功才算作成功
 	if *provider.DDNSProfile.EnableIPv4 {
 		provider.recordType = getRecordString(true)
-		provider.ipAddr = provider.IPAddrs.Ipv4Addr
+		provider.ipAddr = provider.IPAddrs.IPv4Addr
 		if err = provider.addDomainRecord(); err != nil {
 			return err
 		}
@@ -79,7 +74,7 @@ func (provider *Provider) updateDomain(domain string) error {
 
 	if *provider.DDNSProfile.EnableIPv6 {
 		provider.recordType = getRecordString(false)
-		provider.ipAddr = provider.IPAddrs.Ipv6Addr
+		provider.ipAddr = provider.IPAddrs.IPv6Addr
 		if err = provider.addDomainRecord(); err != nil {
 			return err
 		}
@@ -114,11 +109,11 @@ func splitDomainSOA(domain string) (prefix string, zone string, err error) {
 
 	var r *dns.Msg
 	for _, idx := range indexes {
-		m := new(dns.Msg)
+		var m dns.Msg
 		m.SetQuestion(domain[idx:], dns.TypeSOA)
 
 		for _, server := range servers {
-			r, _, err = c.Exchange(m, server)
+			r, _, err = c.Exchange(&m, server)
 			if err != nil {
 				return
 			}
