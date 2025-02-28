@@ -43,7 +43,7 @@ func TestNotification(t *testing.T) {
 
 func TestGenerGenerateRandomString(t *testing.T) {
 	generatedString := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		str, err := GenerateRandomString(32)
 		if err != nil {
 			t.Fatalf("Error: %s", err)

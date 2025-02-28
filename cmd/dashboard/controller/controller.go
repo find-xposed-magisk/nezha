@@ -175,10 +175,10 @@ type pHandlerFunc[S ~[]E, E any] func(c *gin.Context) (*model.Value[S], error)
 // gorm errors here instead
 type gormError struct {
 	msg string
-	a   []interface{}
+	a   []any
 }
 
-func newGormError(format string, args ...interface{}) error {
+func newGormError(format string, args ...any) error {
 	return &gormError{
 		msg: format,
 		a:   args,
@@ -191,10 +191,10 @@ func (ge *gormError) Error() string {
 
 type wsError struct {
 	msg string
-	a   []interface{}
+	a   []any
 }
 
-func newWsError(format string, args ...interface{}) error {
+func newWsError(format string, args ...any) error {
 	return &wsError{
 		msg: format,
 		a:   args,

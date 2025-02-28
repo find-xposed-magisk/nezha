@@ -52,7 +52,7 @@ func OnUserUpdate(u *model.User) {
 	AgentSecretToUserId[u.AgentSecret] = u.ID
 }
 
-func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) error {
+func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 	UserLock.Lock()
 	defer UserLock.Unlock()
 

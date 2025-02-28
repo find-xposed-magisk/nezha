@@ -1,12 +1,12 @@
 package controller
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-json"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -48,8 +48,8 @@ func initParams() *jwt.GinJWTMiddleware {
 	}
 }
 
-func payloadFunc() func(data interface{}) jwt.MapClaims {
-	return func(data interface{}) jwt.MapClaims {
+func payloadFunc() func(data any) jwt.MapClaims {
+	return func(data any) jwt.MapClaims {
 		if v, ok := data.(string); ok {
 			return jwt.MapClaims{
 				model.CtxKeyAuthorizedUser: v,
@@ -59,8 +59,8 @@ func payloadFunc() func(data interface{}) jwt.MapClaims {
 	}
 }
 
-func identityHandler() func(c *gin.Context) interface{} {
-	return func(c *gin.Context) interface{} {
+func identityHandler() func(c *gin.Context) any {
+	return func(c *gin.Context) any {
 		claims := jwt.ExtractClaims(c)
 		userId := claims[model.CtxKeyAuthorizedUser].(string)
 		var user model.User
@@ -80,8 +80,8 @@ func identityHandler() func(c *gin.Context) interface{} {
 // @Produce json
 // @Success 200 {object} model.CommonResponse[model.LoginResponse]
 // @Router /login [post]
-func authenticator() func(c *gin.Context) (interface{}, error) {
-	return func(c *gin.Context) (interface{}, error) {
+func authenticator() func(c *gin.Context) (any, error) {
+	return func(c *gin.Context) (any, error) {
 		var loginVals model.LoginRequest
 		if err := c.ShouldBind(&loginVals); err != nil {
 			return "", jwt.ErrMissingLoginValues
@@ -113,8 +113,8 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 	}
 }
 
-func authorizator() func(data interface{}, c *gin.Context) bool {
-	return func(data interface{}, c *gin.Context) bool {
+func authorizator() func(data any, c *gin.Context) bool {
+	return func(data any, c *gin.Context) bool {
 		_, ok := data.(*model.User)
 		return ok
 	}

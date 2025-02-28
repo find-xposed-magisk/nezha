@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -16,8 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ory/graceful"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/nezhahq/nezha/cmd/dashboard/controller"
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
@@ -133,20 +133,54 @@ func main() {
 	controller.InitUpgrader()
 
 	muxHandler := newHTTPandGRPCMux(httpHandler, grpcHandler)
-	http2Server := &http2.Server{}
-	muxServer := &http.Server{Handler: h2c.NewHandler(muxHandler, http2Server), ReadHeaderTimeout: time.Second * 5}
+	muxServerHTTP := &http.Server{
+		Handler:           muxHandler,
+		ReadHeaderTimeout: time.Second * 5,
+	}
+	muxServerHTTP.Protocols = new(http.Protocols)
+	muxServerHTTP.Protocols.SetHTTP1(true)
+	muxServerHTTP.Protocols.SetUnencryptedHTTP2(true)
+
+	var muxServerHTTPS *http.Server
+	if singleton.Conf.HTTPS.ListenPort != 0 {
+		muxServerHTTPS = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
+			Handler:           muxHandler,
+			ReadHeaderTimeout: time.Second * 5,
+			TLSConfig: &tls.Config{
+				InsecureSkipVerify: singleton.Conf.HTTPS.InsecureTLS,
+			},
+		}
+	}
+
+	errChan := make(chan error, 2)
 
 	if err := graceful.Graceful(func() error {
 		log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort)
-		return muxServer.Serve(l)
+		if singleton.Conf.HTTPS.ListenPort != 0 {
+			go func() {
+				errChan <- muxServerHTTPS.ListenAndServeTLS(singleton.Conf.HTTPS.TLSCertPath, singleton.Conf.HTTPS.TLSKeyPath)
+			}()
+			log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort)
+		}
+		go func() {
+			errChan <- muxServerHTTP.Serve(l)
+		}()
+		return <-errChan
 	}, func(c context.Context) error {
 		log.Println("NEZHA>> Graceful::START")
 		singleton.RecordTransferHourlyUsage()
 		log.Println("NEZHA>> Graceful::END")
-		return muxServer.Shutdown(c)
+		err := muxServerHTTPS.Shutdown(c)
+		return errors.Join(muxServerHTTP.Shutdown(c), err)
 	}); err != nil {
 		log.Printf("NEZHA>> ERROR: %v", err)
+		if errors.Unwrap(err) != nil {
+			log.Printf("NEZHA>> ERROR HTTPS: %v", err)
+		}
 	}
+
+	close(errChan)
 }
 
 func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.Handler {

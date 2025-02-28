@@ -96,7 +96,7 @@ func OnRefreshOrAddAlert(alert *model.AlertRule) {
 	delete(alertsStore, alert.ID)
 	delete(alertsPrevState, alert.ID)
 	var isEdit bool
-	for i := 0; i < len(Alerts); i++ {
+	for i := range Alerts {
 		if Alerts[i].ID == alert.ID {
 			Alerts[i] = alert
 			isEdit = true
