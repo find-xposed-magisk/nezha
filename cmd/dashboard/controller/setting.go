@@ -17,9 +17,9 @@ import (
 // @Security BearerAuth
 // @Tags common
 // @Produce json
-// @Success 200 {object} model.CommonResponse[model.SettingResponse[model.Config]]
+// @Success 200 {object} model.CommonResponse[model.SettingResponse]
 // @Router /setting [get]
-func listConfig(c *gin.Context) (model.SettingResponse[any], error) {
+func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 	u, authorized := c.Get(model.CtxKeyAuthorizedUser)
 	var isAdmin bool
 	if authorized {
@@ -30,30 +30,29 @@ func listConfig(c *gin.Context) (model.SettingResponse[any], error) {
 	config := *singleton.Conf
 	config.Language = strings.Replace(config.Language, "_", "-", -1)
 
-	conf := model.SettingResponse[any]{
-		Config:            config,
+	conf := model.SettingResponse{
+		Config: model.Setting{
+			ConfigForGuests: config.ConfigForGuests,
+			ConfigDashboard: config.ConfigDashboard,
+		},
 		Version:           singleton.Version,
 		FrontendTemplates: singleton.FrontendTemplates,
 	}
 
 	if !authorized || !isAdmin {
-		configForGuests := model.ConfigForGuests{
-			Language:            config.Language,
-			SiteName:            config.SiteName,
-			CustomCode:          config.CustomCode,
-			CustomCodeDashboard: config.CustomCodeDashboard,
-			Oauth2Providers:     config.Oauth2Providers,
-		}
+		configForGuests := config.ConfigForGuests
 		if authorized {
-			configForGuests.TLS = singleton.Conf.TLS
+			configForGuests.AgentTLS = singleton.Conf.AgentTLS
 			configForGuests.InstallHost = singleton.Conf.InstallHost
 		}
-		conf = model.SettingResponse[any]{
-			Config: configForGuests,
+		conf = model.SettingResponse{
+			Config: model.Setting{
+				ConfigForGuests: configForGuests,
+			},
 		}
 	}
 
-	return conf, nil
+	return &conf, nil
 }
 
 // Edit config
@@ -98,7 +97,7 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.CustomCode = sf.CustomCode
 	singleton.Conf.CustomCodeDashboard = sf.CustomCodeDashboard
 	singleton.Conf.RealIPHeader = sf.RealIPHeader
-	singleton.Conf.TLS = sf.TLS
+	singleton.Conf.AgentTLS = sf.AgentTLS
 	singleton.Conf.UserTemplate = sf.UserTemplate
 
 	if err := singleton.Conf.Save(); err != nil {

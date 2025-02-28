@@ -25,7 +25,7 @@ import (
 // @Success 200 {object} model.CommonResponse[model.ServiceResponse]
 // @Router /service [get]
 func showService(c *gin.Context) (*model.ServiceResponse, error) {
-	res, err, _ := requestGroup.Do("list-service", func() (interface{}, error) {
+	res, err, _ := requestGroup.Do("list-service", func() (any, error) {
 		singleton.AlertsLock.RLock()
 		defer singleton.AlertsLock.RUnlock()
 		stats := singleton.ServiceSentinelShared.CopyStats()
@@ -41,8 +41,8 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 	}
 
 	return &model.ServiceResponse{
-		Services:           res.([]interface{})[0].(map[uint64]model.ServiceResponseItem),
-		CycleTransferStats: res.([]interface{})[1].(map[uint64]model.CycleTransferStats),
+		Services:           res.([]any)[0].(map[uint64]model.ServiceResponseItem),
+		CycleTransferStats: res.([]any)[1].(map[uint64]model.CycleTransferStats),
 	}, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/goccy/go-json"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -27,7 +28,7 @@ func ServeRPC() *grpc.Server {
 	return server
 }
 
-func waf(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func waf(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	realip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
 	if err := model.CheckIP(singleton.DB, realip); err != nil {
 		return nil, err
@@ -35,7 +36,7 @@ func waf(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handl
 	return handler(ctx, req)
 }
 
-func getRealIp(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	var ip, connectingIp string
 	p, ok := peer.FromContext(ctx)
 	if ok {
@@ -133,20 +134,20 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	streamId, err := uuid.GenerateUUID()
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(fmt.Sprintf("stream id error: %v", err)))
+		w.Write(fmt.Appendf(nil, "stream id error: %v", err))
 		return
 	}
 
 	rpcService.NezhaHandlerSingleton.CreateStream(streamId)
 	defer rpcService.NezhaHandlerSingleton.CloseStream(streamId)
 
-	taskData, err := utils.Json.Marshal(model.TaskNAT{
+	taskData, err := json.Marshal(model.TaskNAT{
 		StreamID: streamId,
 		Host:     natConfig.Host,
 	})
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(fmt.Sprintf("task data error: %v", err)))
+		w.Write(fmt.Appendf(nil, "task data error: %v", err))
 		return
 	}
 
@@ -155,20 +156,20 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		Data: string(taskData),
 	}); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(fmt.Sprintf("send task error: %v", err)))
+		w.Write(fmt.Appendf(nil, "send task error: %v", err))
 		return
 	}
 
 	wWrapped, err := utils.NewRequestWrapper(r, w)
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(fmt.Sprintf("request wrapper error: %v", err)))
+		w.Write(fmt.Appendf(nil, "request wrapper error: %v", err))
 		return
 	}
 
 	if err := rpcService.NezhaHandlerSingleton.UserConnected(streamId, wWrapped); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(fmt.Sprintf("user connected error: %v", err)))
+		w.Write(fmt.Appendf(nil, "user connected error: %v", err))
 		return
 	}
 

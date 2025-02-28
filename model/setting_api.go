@@ -13,9 +13,14 @@ type SettingForm struct {
 	RealIPHeader                string `json:"real_ip_header,omitempty" validate:"optional"` // 真实IP
 	UserTemplate                string `json:"user_template,omitempty" validate:"optional"`
 
-	TLS                         bool `json:"tls,omitempty" validate:"optional"`
+	AgentTLS                    bool `json:"tls,omitempty" validate:"optional"`
 	EnableIPChangeNotification  bool `json:"enable_ip_change_notification,omitempty" validate:"optional"`
 	EnablePlainIPInNotification bool `json:"enable_plain_ip_in_notification,omitempty" validate:"optional"`
+}
+
+type Setting struct {
+	ConfigForGuests
+	ConfigDashboard
 }
 
 type FrontendTemplate struct {
@@ -28,8 +33,8 @@ type FrontendTemplate struct {
 	IsOfficial bool   `json:"is_official,omitempty"`
 }
 
-type SettingResponse[T any] struct {
-	Config T `json:"config,omitempty"`
+type SettingResponse struct {
+	Config Setting `json:"config"`
 
 	Version           string             `json:"version,omitempty"`
 	FrontendTemplates []FrontendTemplate `json:"frontend_templates,omitempty"`

@@ -117,7 +117,7 @@ func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 	}
 	now := uint64(time.Now().Unix())
 
-	var count interface{}
+	var count any
 	if reason == WAFBlockReasonTypeManual {
 		count = 99999
 	} else {

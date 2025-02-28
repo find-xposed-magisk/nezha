@@ -77,7 +77,7 @@ func SearchByIDCtx[S ~[]E, E CommonInterface](c *gin.Context, x S) S {
 		return any(l).(S)
 	default:
 		var s S
-		for _, idStr := range strings.Split(c.Query("id"), ",") {
+		for idStr := range strings.SplitSeq(c.Query("id"), ",") {
 			id, err := strconv.ParseUint(idStr, 10, 64)
 			if err != nil {
 				continue
@@ -93,7 +93,7 @@ func searchByIDCtxServer(c *gin.Context, x []*Server) []*Server {
 	list1, list2 := SplitList(x)
 
 	var clist1, clist2 []*Server
-	for _, idStr := range strings.Split(c.Query("id"), ",") {
+	for idStr := range strings.SplitSeq(c.Query("id"), ",") {
 		id, err := strconv.ParseUint(idStr, 10, 64)
 		if err != nil {
 			continue
