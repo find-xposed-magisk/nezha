@@ -1,6 +1,8 @@
 package model
 
 import (
+	"slices"
+
 	"github.com/goccy/go-json"
 	"gorm.io/gorm"
 )
@@ -72,40 +74,49 @@ func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Ser
 }
 
 // Check 传入包含当前报警规则下所有type检查结果 返回报警持续时间与是否通过报警检查(通过则返回true)
-func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
+func (r *AlertRule) Check(points [][]bool) (int, bool) {
 	var hasPassedRule bool
+	durations := make([]int, len(r.Rules))
 
-	for ruleId, rule := range r.Rules {
+	for ruleIndex, rule := range r.Rules {
+		fail, duration := 0, int(rule.Duration)
 		if rule.IsTransferDurationRule() {
 			// 循环区间流量报警
-			if maxDuration < 1 {
-				maxDuration = 1
+			if durations[ruleIndex] < 1 {
+				durations[ruleIndex] = 1
 			}
 			if hasPassedRule {
 				continue
 			}
 			// 只要最后一次检查超出了规则范围 就认为检查未通过
-			if len(points) > 0 && points[len(points)-1][ruleId] {
+			if len(points) > 0 && points[len(points)-1][ruleIndex] {
 				hasPassedRule = true
 			}
+		} else if rule.IsOfflineRule() {
+			// 离线报警，检查直到最后一次在线的离线采样点是否大于 duration
+			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
+				continue
+			}
+			for timeTick := len(points); timeTick >= len(points)-duration; timeTick-- {
+				fail++
+				if points[timeTick][ruleIndex] {
+					hasPassedRule = true
+					break
+				}
+			}
+			durations[ruleIndex] = fail
+			continue
 		} else {
 			// 常规报警
-			duration := int(rule.Duration)
-			if duration > maxDuration {
-				maxDuration = duration
+			if duration > durations[ruleIndex] {
+				durations[ruleIndex] = duration
 			}
-			if hasPassedRule {
+			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}
-			if len(points) < duration {
-				// 如果采样点数量不足 则认为检查通过
-				hasPassedRule = true
-				continue
-			}
-			total, fail := 0, 0
+			total, fail := duration, 0
 			for timeTick := len(points) - duration; timeTick < len(points); timeTick++ {
-				total++
-				if !points[timeTick][ruleId] {
+				if !points[timeTick][ruleIndex] {
 					fail++
 				}
 			}
@@ -117,5 +128,13 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 	}
 
 	// 仅当所有检查均未通过时 才触发告警
-	return maxDuration, hasPassedRule
+	return slices.Max(durations), hasPassedRule
+}
+
+func boundCheck(length, duration int, passed bool) bool {
+	if passed {
+		return true
+	}
+	// 如果采样点数量不足 则认为检查通过
+	return length < duration
 }
