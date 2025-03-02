@@ -79,7 +79,7 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 	durations := make([]int, len(r.Rules))
 
 	for ruleIndex, rule := range r.Rules {
-		fail, duration := 0, int(rule.Duration)
+		duration := int(rule.Duration)
 		if rule.IsTransferDurationRule() {
 			// 循环区间流量报警
 			if durations[ruleIndex] < 1 {
@@ -97,9 +97,10 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}
-			for timeTick := len(points); timeTick > len(points)-duration; timeTick-- {
+			var fail int
+			for _, point := range slices.Backward(points[len(points)-duration:]) {
 				fail++
-				if points[timeTick][ruleIndex] {
+				if point[ruleIndex] {
 					hasPassedRule = true
 					break
 				}
