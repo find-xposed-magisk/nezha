@@ -427,7 +427,6 @@ func (ss *ServiceSentinel) worker() {
 			ts.ping = (ts.ping*float32(ts.count-1) + mh.Delay) / float32(ts.count)
 			if ts.count == Conf.AvgPingCount {
 				ts.count = 0
-				ts.ping = mh.Delay
 				if err := DB.Create(&model.ServiceHistory{
 					ServiceID: mh.GetId(),
 					AvgDelay:  ts.ping,
@@ -436,6 +435,7 @@ func (ss *ServiceSentinel) worker() {
 				}).Error; err != nil {
 					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 				}
+				ts.ping = mh.Delay
 			}
 			serviceTcpMap[r.Reporter] = ts
 		}
