@@ -11,9 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
-	"gopkg.in/yaml.v3"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"sigs.k8s.io/yaml"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
@@ -22,7 +22,6 @@ import (
 var Version = "debug"
 
 var (
-	Conf              *model.Config
 	Cache             *cache.Cache
 	DB                *gorm.DB
 	Loc               *time.Location
@@ -64,15 +63,6 @@ func LoadSingleton() {
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
 func InitFrontendTemplates() {
 	err := yaml.Unmarshal(frontendTemplatesYAML, &FrontendTemplates)
-	if err != nil {
-		panic(err)
-	}
-}
-
-// InitConfigFromPath 从给出的文件路径中加载配置
-func InitConfigFromPath(path string) {
-	Conf = &model.Config{}
-	err := Conf.Read(path, FrontendTemplates)
 	if err != nil {
 		panic(err)
 	}
