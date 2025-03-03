@@ -155,12 +155,16 @@ func (s *NezhaHandler) onReportSystemInfo(c context.Context, r *pb.Host) error {
 }
 
 func (s *NezhaHandler) ReportSystemInfo(c context.Context, r *pb.Host) (*pb.Receipt, error) {
-	s.onReportSystemInfo(c, r)
+	if err := s.onReportSystemInfo(c, r); err != nil {
+		return nil, err
+	}
 	return &pb.Receipt{Proced: true}, nil
 }
 
 func (s *NezhaHandler) ReportSystemInfo2(c context.Context, r *pb.Host) (*pb.Uint64Receipt, error) {
-	s.onReportSystemInfo(c, r)
+	if err := s.onReportSystemInfo(c, r); err != nil {
+		return nil, err
+	}
 	return &pb.Uint64Receipt{Data: singleton.DashboardBootTime}, nil
 }
 
