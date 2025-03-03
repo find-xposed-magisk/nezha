@@ -51,7 +51,7 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		result, err = stream.Recv()
 		if err != nil {
 			log.Printf("NEZHA>> RequestTask error: %v, clientID: %d\n", err, clientID)
-			return nil
+			return err
 		}
 		switch result.GetType() {
 		case model.TaskTypeCommand:
@@ -94,9 +94,8 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 }
 
 func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStateServer) error {
-	var err error
-	var clientID uint64
-	if clientID, err = s.Auth.Check(stream.Context()); err != nil {
+	clientID, err := s.Auth.Check(stream.Context())
+	if err != nil {
 		return err
 	}
 	var state *pb.State
@@ -104,24 +103,27 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 		state, err = stream.Recv()
 		if err != nil {
 			log.Printf("NEZHA>> ReportSystemState error: %v, clientID: %d\n", err, clientID)
-			return nil
+			return err
 		}
-		state := model.PB2State(state)
+		innerState := model.PB2State(state)
 
 		server, ok := singleton.ServerShared.Get(clientID)
 		if !ok || server == nil {
-			return nil
+			return errors.New("server not found")
 		}
 
 		server.LastActive = time.Now()
-		server.State = &state
+		server.State = &innerState
+
 		// 应对 dashboard 重启的情况，如果从未记录过，先打点，等到小时时间点时入库
 		if server.PrevTransferInSnapshot == 0 || server.PrevTransferOutSnapshot == 0 {
 			server.PrevTransferInSnapshot = int64(state.NetInTransfer)
 			server.PrevTransferOutSnapshot = int64(state.NetOutTransfer)
 		}
 
-		stream.Send(&pb.Receipt{Proced: true})
+		if err = stream.Send(&pb.Receipt{Proced: true}); err != nil {
+			return err
+		}
 	}
 }
 
