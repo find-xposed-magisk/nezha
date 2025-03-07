@@ -109,11 +109,11 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			continue
 		} else {
 			// 常规报警
-			if duration > durations[ruleIndex] {
-				durations[ruleIndex] = duration
-			}
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
+			}
+			if duration > durations[ruleIndex] {
+				durations[ruleIndex] = duration
 			}
 			total, fail := duration, 0
 			for timeTick := len(points) - duration; timeTick < len(points); timeTick++ {
