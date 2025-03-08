@@ -2,7 +2,7 @@
   name: "OfficialAdmin"
   repository: "https://github.com/nezhahq/admin-frontend"
   author: "nezhahq"
-  version: "v1.8.0"
+  version: "v1.9.0"
   is_admin: true
   is_official: true
 - path: "user-dist"
