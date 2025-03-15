@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -193,13 +192,12 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
 	callbackData *model.Oauth2Callback, redirectURL string) (string, error) {
 	o2conf := o2confRaw.Setup(redirectURL)
-	ctx := context.Background()
 
-	otk, err := o2conf.Exchange(ctx, callbackData.Code)
+	otk, err := o2conf.Exchange(c, callbackData.Code)
 	if err != nil {
 		return "", err
 	}
-	oauth2client := o2conf.Client(ctx, otk)
+	oauth2client := o2conf.Client(c, otk)
 	resp, err := oauth2client.Get(o2confRaw.UserInfoURL)
 	if err != nil {
 		return "", err
