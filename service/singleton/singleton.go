@@ -39,14 +39,15 @@ var (
 //go:embed frontend-templates.yaml
 var frontendTemplatesYAML []byte
 
-func InitTimezoneAndCache() {
+func InitTimezoneAndCache() error {
 	var err error
 	Loc, err = time.LoadLocation(Conf.Location)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	Cache = cache.New(5*time.Minute, 10*time.Minute)
+	return nil
 }
 
 // LoadSingleton 加载子服务并执行
@@ -61,21 +62,22 @@ func LoadSingleton() {
 }
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
-func InitFrontendTemplates() {
+func InitFrontendTemplates() error {
 	err := yaml.Unmarshal(frontendTemplatesYAML, &FrontendTemplates)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // InitDBFromPath 从给出的文件路径中加载数据库
-func InitDBFromPath(path string) {
+func InitDBFromPath(path string) error {
 	var err error
 	DB, err = gorm.Open(sqlite.Open(path), &gorm.Config{
 		CreateBatchSize: 200,
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	if Conf.Debug {
 		DB = DB.Debug()
@@ -86,32 +88,39 @@ func InitDBFromPath(path string) {
 		model.NAT{}, model.DDNSProfile{}, model.NotificationGroupNotification{},
 		model.WAF{}, model.Oauth2Bind{})
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // RecordTransferHourlyUsage 对流量记录进行打点
-func RecordTransferHourlyUsage() {
-	ServerShared.listMu.RLock()
-	defer ServerShared.listMu.RUnlock()
-
+func RecordTransferHourlyUsage(servers ...*model.Server) {
 	now := time.Now()
 	nowTrimSeconds := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
+
 	var txs []model.Transfer
-	for id, server := range ServerShared.list {
+	var slist iter.Seq[*model.Server]
+	if len(servers) > 0 {
+		slist = slices.Values(servers)
+	} else {
+		slist = utils.Seq2To1(ServerShared.Range)
+	}
+
+	for server := range slist {
 		tx := model.Transfer{
-			ServerID: id,
-			In:       utils.Uint64SubInt64(server.State.NetInTransfer, server.PrevTransferInSnapshot),
-			Out:      utils.Uint64SubInt64(server.State.NetOutTransfer, server.PrevTransferOutSnapshot),
+			ServerID: server.ID,
+			In:       utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot),
+			Out:      utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot),
 		}
 		if tx.In == 0 && tx.Out == 0 {
 			continue
 		}
-		server.PrevTransferInSnapshot = int64(server.State.NetInTransfer)
-		server.PrevTransferOutSnapshot = int64(server.State.NetOutTransfer)
+		server.PrevTransferInSnapshot = server.State.NetInTransfer
+		server.PrevTransferOutSnapshot = server.State.NetOutTransfer
 		tx.CreatedAt = nowTrimSeconds
 		txs = append(txs, tx)
 	}
+
 	if len(txs) == 0 {
 		return
 	}

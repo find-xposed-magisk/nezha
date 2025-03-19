@@ -13,7 +13,14 @@ type arSt struct {
 	exp    bool
 }
 
-func TestCycleRules(t *testing.T) {
+func TestAlertRules(t *testing.T) {
+	t.Run("CycleRules", testCycleRules)
+	t.Run("OfflineRules", testOfflineRules)
+	t.Run("GeneralRules", testGeneralRules)
+	t.Run("CombinedRules", testCombinedRules)
+}
+
+func testCycleRules(t *testing.T) {
 	cases := []arSt{
 		{
 			rule: &AlertRule{
@@ -50,7 +57,7 @@ func TestCycleRules(t *testing.T) {
 	}
 }
 
-func TestOfflineRules(t *testing.T) {
+func testOfflineRules(t *testing.T) {
 	cases := []arSt{
 		{
 			rule: &AlertRule{
@@ -117,7 +124,7 @@ func TestOfflineRules(t *testing.T) {
 	}
 }
 
-func TestGeneralRules(t *testing.T) {
+func testGeneralRules(t *testing.T) {
 	cases := []arSt{
 		{
 			rule: &AlertRule{
@@ -193,7 +200,7 @@ func TestGeneralRules(t *testing.T) {
 	}
 }
 
-func TestCombinedRules(t *testing.T) {
+func testCombinedRules(t *testing.T) {
 	cases := []arSt{
 		{
 			rule: &AlertRule{

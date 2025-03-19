@@ -132,8 +132,8 @@ func ManualTrigger(cr *model.Cron) {
 
 func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 	crIgnoreMap := make(map[uint64]bool)
-	for j := 0; j < len(cr.Servers); j++ {
-		crIgnoreMap[cr.Servers[j]] = true
+	for _, server := range cr.Servers {
+		crIgnoreMap[server] = true
 	}
 	return func() {
 		if cr.Cover == model.CronCoverAlertTrigger {
@@ -151,7 +151,7 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 					// 保存当前服务器状态信息
 					curServer := model.Server{}
 					copier.Copy(&curServer, s)
-					NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), "", &curServer)
+					go NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), "", &curServer)
 				}
 			}
 			return
@@ -174,7 +174,7 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				// 保存当前服务器状态信息
 				curServer := model.Server{}
 				copier.Copy(&curServer, s)
-				NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), "", &curServer)
+				go NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), "", &curServer)
 			}
 		}
 	}

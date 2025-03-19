@@ -91,16 +91,6 @@ func MustGenerateRandomString(n int) string {
 	return str
 }
 
-func Uint64SubInt64(a uint64, b int64) uint64 {
-	if b < 0 {
-		return a + uint64(-b)
-	}
-	if a < uint64(b) {
-		return 0
-	}
-	return a - uint64(b)
-}
-
 func IfOr[T any](a bool, x, y T) T {
 	if a {
 		return x
@@ -159,6 +149,16 @@ func ConvertSeq2[KIn, VIn, KOut, VOut any](seq iter.Seq2[KIn, VIn], f func(KIn, 
 	}
 }
 
+func Seq2To1[K, V any](seq iter.Seq2[K, V]) iter.Seq[V] {
+	return func(yield func(V) bool) {
+		for _, v := range seq {
+			if !yield(v) {
+				return
+			}
+		}
+	}
+}
+
 type WrapError struct {
 	err, errIn error
 }
@@ -173,4 +173,21 @@ func (e *WrapError) Error() string {
 
 func (e *WrapError) Unwrap() error {
 	return e.errIn
+}
+
+func FirstError(errorer ...func() error) error {
+	for _, fn := range errorer {
+		if err := fn(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func SubUintChecked[T constraints.Unsigned](a, b T) T {
+	if a < b {
+		return 0
+	}
+
+	return a - b
 }

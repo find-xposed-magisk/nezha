@@ -2,7 +2,7 @@ package geoip
 
 import (
 	_ "embed"
-	"fmt"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -48,5 +48,5 @@ func Lookup(ip net.IP) (string, error) {
 		return strings.ToLower(record.Continent), nil
 	}
 
-	return "", fmt.Errorf("IP not found")
+	return "", errors.New("IP not found")
 }

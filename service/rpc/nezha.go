@@ -117,10 +117,10 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 		server.LastActive = time.Now()
 		server.State = &innerState
 
-		// 应对 dashboard 重启的情况，如果从未记录过，先打点，等到小时时间点时入库
+		// 应对 dashboard / agent 重启的情况，如果从未记录过，先打点，等到小时时间点时入库
 		if server.PrevTransferInSnapshot == 0 || server.PrevTransferOutSnapshot == 0 {
-			server.PrevTransferInSnapshot = int64(state.NetInTransfer)
-			server.PrevTransferOutSnapshot = int64(state.NetOutTransfer)
+			server.PrevTransferInSnapshot = state.NetInTransfer
+			server.PrevTransferOutSnapshot = state.NetOutTransfer
 		}
 
 		if err = stream.Send(&pb.Receipt{Proced: true}); err != nil {
@@ -139,17 +139,18 @@ func (s *NezhaHandler) onReportSystemInfo(c context.Context, r *pb.Host) error {
 
 	server, ok := singleton.ServerShared.Get(clientID)
 	if !ok || server == nil {
-		return fmt.Errorf("server not found")
+		return errors.New("server not found")
 	}
 
 	/**
 	 * 这里的 singleton 中的数据都是关机前的旧数据
 	 * 当 agent 重启时，bootTime 变大，agent 端会先上报 host 信息，然后上报 state 信息
-	 * 这是可以借助上报顺序的空档，将停机前的流量统计数据标记下来，加到下一个小时的数据点上
+	 * 这时可以借助上报顺序的空档，立即记录停机前的数据并重置 Prev* 数据，并由接下来的 state 方法重新赋值
 	 */
-	if server.Host != nil && server.Host.BootTime < host.BootTime {
-		server.PrevTransferInSnapshot = server.PrevTransferInSnapshot - int64(server.State.NetInTransfer)
-		server.PrevTransferOutSnapshot = server.PrevTransferOutSnapshot - int64(server.State.NetOutTransfer)
+	if !server.LastActive.IsZero() && host.BootTime > server.Host.BootTime {
+		singleton.RecordTransferHourlyUsage(server)
+		server.PrevTransferInSnapshot = 0
+		server.PrevTransferOutSnapshot = 0
 	}
 
 	server.Host = &host
