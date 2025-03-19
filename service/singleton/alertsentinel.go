@@ -36,19 +36,19 @@ func addCycleTransferStatsInfo(alert *model.AlertRule) {
 	if !alert.Enabled() {
 		return
 	}
-	for j := 0; j < len(alert.Rules); j++ {
-		if !alert.Rules[j].IsTransferDurationRule() {
+	for _, rule := range alert.Rules {
+		if !rule.IsTransferDurationRule() {
 			continue
 		}
 		if AlertsCycleTransferStatsStore[alert.ID] == nil {
-			from := alert.Rules[j].GetTransferDurationStart()
-			to := alert.Rules[j].GetTransferDurationEnd()
+			from := rule.GetTransferDurationStart()
+			to := rule.GetTransferDurationEnd()
 			AlertsCycleTransferStatsStore[alert.ID] = &model.CycleTransferStats{
 				Name:       alert.Name,
 				From:       from,
 				To:         to,
-				Max:        uint64(alert.Rules[j].Max),
-				Min:        uint64(alert.Rules[j].Min),
+				Max:        uint64(rule.Max),
+				Min:        uint64(rule.Min),
 				ServerName: make(map[uint64]string),
 				Transfer:   make(map[uint64]uint64),
 				NextUpdate: make(map[uint64]time.Time),

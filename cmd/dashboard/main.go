@@ -69,7 +69,7 @@ func initSystem() error {
 	}
 
 	// 每小时对流量记录进行打点
-	if _, err := singleton.CronShared.AddFunc("0 0 * * * *", singleton.RecordTransferHourlyUsage); err != nil {
+	if _, err := singleton.CronShared.AddFunc("0 0 * * * *", func() { singleton.RecordTransferHourlyUsage() }); err != nil {
 		return err
 	}
 	return nil
@@ -108,11 +108,11 @@ func main() {
 	}
 
 	// 初始化 dao 包
-	singleton.InitFrontendTemplates()
-	singleton.InitConfigFromPath(dashboardCliParam.ConfigFile)
-	singleton.InitTimezoneAndCache()
-	singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation)
-	if err := initSystem(); err != nil {
+	if err := utils.FirstError(singleton.InitFrontendTemplates,
+		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
+		singleton.InitTimezoneAndCache,
+		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
+		initSystem); err != nil {
 		log.Fatal(err)
 	}
 
