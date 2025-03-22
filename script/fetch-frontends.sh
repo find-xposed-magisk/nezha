@@ -19,7 +19,7 @@ download_and_extract() {
 
   curl -L -o "dist.zip" "$repository/releases/download/$version/dist.zip"
 
-[ -e "$targetDir" ] && rm -r "$targetDir"
+  [ -e "$targetDir" ] && rm -r "$targetDir"
   unzip -q dist.zip
   mv dist "$targetDir"
 
