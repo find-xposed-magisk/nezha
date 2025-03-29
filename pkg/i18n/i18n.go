@@ -11,17 +11,6 @@ import (
 //go:embed translations
 var Translations embed.FS
 
-var Languages = map[string]string{
-	"zh_CN": "简体中文",
-	"zh_TW": "繁體中文",
-	"en_US": "English",
-	"es_ES": "Español",
-	"de_DE": "Deutsch",
-	"it_IT": "Italiano",
-	"ru_RU": "Русский",
-	"ta_IN": "தமிழ்",
-}
-
 type Localizer struct {
 	intlMap map[string]gettext.Gettexter
 	lang    string
