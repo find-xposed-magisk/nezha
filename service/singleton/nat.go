@@ -20,7 +20,7 @@ func NewNATClass() *NATClass {
 	DB.Find(&sortedList)
 	list := make(map[string]*model.NAT, len(sortedList))
 	idToDomain := make(map[uint64]string, len(sortedList))
-	for _, profile := range list {
+	for _, profile := range sortedList {
 		list[profile.Domain] = profile
 		idToDomain[profile.ID] = profile.Domain
 	}
