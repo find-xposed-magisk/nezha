@@ -52,14 +52,15 @@ func InitTimezoneAndCache() error {
 
 // LoadSingleton 加载子服务并执行
 func LoadSingleton(bus chan<- *model.Service) (err error) {
-	initUser() // 加载用户ID绑定表
 	initI18n() // 加载本地化服务
+	initUser() // 加载用户ID绑定表
 	NATShared = NewNATClass()
 	DDNSShared = NewDDNSClass()
-	NotificationShared = NewNotificationClass()     // 加载通知服务
-	ServerShared = NewServerClass(Conf, DDNSShared) // 加载服务器列表
-	CronShared = NewCronClass()                     // 加载定时任务
-	ServiceSentinelShared, err = NewServiceSentinel(bus, ServerShared, NotificationShared, CronShared)
+	NotificationShared = NewNotificationClass()
+	ServerShared = NewServerClass()
+	CronShared = NewCronClass()
+	// 最后初始化 ServiceSentinel
+	ServiceSentinelShared, err = NewServiceSentinel(bus)
 	return
 }
 

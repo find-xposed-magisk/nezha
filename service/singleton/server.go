@@ -18,19 +18,14 @@ type ServerClass struct {
 	uuidToID map[string]uint64
 
 	sortedListForGuest []*model.Server
-
-	conf *ConfigClass
-	dc   *DDNSClass
 }
 
-func NewServerClass(conf *ConfigClass, dc *DDNSClass) *ServerClass {
+func NewServerClass() *ServerClass {
 	sc := &ServerClass{
 		class: class[uint64, *model.Server]{
 			list: make(map[uint64]*model.Server),
 		},
 		uuidToID: make(map[string]uint64),
-		conf:     conf,
-		dc:       dc,
 	}
 
 	var servers []model.Server
@@ -95,10 +90,10 @@ func (c *ServerClass) UUIDToID(uuid string) (id uint64, ok bool) {
 }
 
 func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
-	confServers := strings.Split(c.conf.DNSServers, ",")
+	confServers := strings.Split(Conf.DNSServers, ",")
 	ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(confServers[0] != "", confServers, utils.DNSServers))
 
-	providers, err := c.dc.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP))
+	providers, err := DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP))
 	if err != nil {
 		return err
 	}
