@@ -3,29 +3,45 @@ package i18n
 import (
 	"embed"
 	"fmt"
+	"io/fs"
+	"path"
 	"sync"
 
-	"github.com/chai2010/gettext-go"
+	"github.com/leonelquinteros/gotext"
 )
 
 //go:embed translations
 var Translations embed.FS
 
 type Localizer struct {
-	intlMap map[string]gettext.Gettexter
+	intlMap map[string]gotext.Translator
 	lang    string
+	domain  string
+	path    string
+	fs      fs.FS
 
 	mu sync.RWMutex
 }
 
-func NewLocalizer(lang, domain, path string, data any) *Localizer {
-	intl := gettext.New(domain, path, data)
-	intl.SetLanguage(lang)
+func NewLocalizer(lang, domain, path string, fs fs.FS) *Localizer {
+	loc := &Localizer{
+		intlMap: make(map[string]gotext.Translator),
+		lang:    lang,
+		domain:  domain,
+		path:    path,
+		fs:      fs,
+	}
 
-	intlMap := make(map[string]gettext.Gettexter)
-	intlMap[lang] = intl
+	file := loc.findExt(lang, "mo")
+	if file == "" {
+		return loc
+	}
 
-	return &Localizer{intlMap: intlMap, lang: lang}
+	mo := gotext.NewMoFS(loc.fs)
+	mo.ParseFile(file)
+	loc.intlMap[lang] = mo
+
+	return loc
 }
 
 func (l *Localizer) SetLanguage(lang string) {
@@ -45,14 +61,19 @@ func (l *Localizer) Exists(lang string) bool {
 	return false
 }
 
-func (l *Localizer) AppendIntl(lang, domain, path string, data any) {
-	intl := gettext.New(domain, path, data)
-	intl.SetLanguage(lang)
+func (l *Localizer) AppendIntl(lang string) {
+	file := l.findExt(lang, "mo")
+	if file == "" {
+		return
+	}
+
+	mo := gotext.NewMoFS(l.fs)
+	mo.ParseFile(file)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.intlMap[lang] = intl
+	l.intlMap[lang] = mo
 }
 
 // Modified from k8s.io/kubectl/pkg/util/i18n
@@ -65,7 +86,7 @@ func (l *Localizer) T(orig string) string {
 		return orig
 	}
 
-	return intl.PGettext("", orig)
+	return intl.Get(orig)
 }
 
 // N translates a string, possibly substituting arguments into it along
@@ -80,9 +101,9 @@ func (l *Localizer) N(orig string, args ...int) string {
 	}
 
 	if len(args) == 0 {
-		return intl.PGettext("", orig)
+		return intl.Get(orig)
 	}
-	return fmt.Sprintf(intl.PNGettext("", orig, orig+".plural", args[0]),
+	return fmt.Sprintf(intl.GetN(orig, orig+".plural", args[0]),
 		args[0])
 }
 
@@ -95,4 +116,38 @@ func (l *Localizer) ErrorT(defaultValue string, args ...any) error {
 
 func (l *Localizer) Tf(defaultValue string, args ...any) string {
 	return fmt.Sprintf(l.T(defaultValue), args...)
+}
+
+// https://github.com/leonelquinteros/gotext/blob/v1.7.1/locale.go
+func (l *Localizer) findExt(lang, ext string) string {
+	filename := path.Join(l.path, lang, "LC_MESSAGES", l.domain+"."+ext)
+	if l.fileExists(filename) {
+		return filename
+	}
+
+	if len(lang) > 2 {
+		filename = path.Join(l.path, lang[:2], "LC_MESSAGES", l.domain+"."+ext)
+		if l.fileExists(filename) {
+			return filename
+		}
+	}
+
+	filename = path.Join(l.path, lang, l.domain+"."+ext)
+	if l.fileExists(filename) {
+		return filename
+	}
+
+	if len(lang) > 2 {
+		filename = path.Join(l.path, lang[:2], l.domain+"."+ext)
+		if l.fileExists(filename) {
+			return filename
+		}
+	}
+
+	return ""
+}
+
+func (l *Localizer) fileExists(filename string) bool {
+	_, err := fs.Stat(l.fs, filename)
+	return err == nil
 }
