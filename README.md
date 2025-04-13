@@ -72,7 +72,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/fscarmen" title="fscarmen"><img src="https://avatars.githubusercontent.com/u/62703343?v=4" width="50;" alt="fscarmen"/></a>
 <a href="https://github.com/ch8o" title="no-name-now"><img src="https://avatars.githubusercontent.com/u/9103372?v=4" width="50;" alt="no-name-now"/></a>
 <a href="https://github.com/MemoryShadow" title="JSker9"><img src="https://avatars.githubusercontent.com/u/31596045?v=4" width="50;" alt="JSker9"/></a>
-<a href="https://github.com/HsukqiLee" title="HsukqiLee"><img src="https://avatars.githubusercontent.com/u/79034142?v=4" width="50;" alt="HsukqiLee"/></a>
+<a href="https://github.com/HsukqiLee" title="Hsukqi Lee"><img src="https://avatars.githubusercontent.com/u/79034142?v=4" width="50;" alt="Hsukqi Lee"/></a>
 <a href="https://github.com/DarcJC" title="Darc Z."><img src="https://avatars.githubusercontent.com/u/53445798?v=4" width="50;" alt="Darc Z."/></a>
 <a href="https://github.com/Creling" title="Creling"><img src="https://avatars.githubusercontent.com/u/43109504?v=4" width="50;" alt="Creling"/></a>
 <a href="https://github.com/coreff" title="Core F"><img src="https://avatars.githubusercontent.com/u/38347122?v=4" width="50;" alt="Core F"/></a>
