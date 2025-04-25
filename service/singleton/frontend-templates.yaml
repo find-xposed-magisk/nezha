@@ -9,7 +9,7 @@
   name: "Official"
   repository: "https://github.com/hamster1963/nezha-dash-v1"
   author: "hamster1963"
-  version: "v1.29.0"
+  version: "v1.30.1"
   is_official: true
 - path: "nezha-ascii-dist"
   name: "Nezha-ASCII"
@@ -20,4 +20,4 @@
   name: "Nazhua"
   repository: "https://github.com/hi2shark/nazhua"
   author: "hi2hi"
-  version: "v0.6.5"
+  version: "v0.6.6"
