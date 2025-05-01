@@ -7,7 +7,6 @@ import (
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
-	gjwt "github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -49,14 +48,14 @@ func initParams() *jwt.GinJWTMiddleware {
 	}
 }
 
-func payloadFunc() func(data any) gjwt.MapClaims {
-	return func(data any) gjwt.MapClaims {
+func payloadFunc() func(data any) jwt.MapClaims {
+	return func(data any) jwt.MapClaims {
 		if v, ok := data.(string); ok {
-			return gjwt.MapClaims{
+			return jwt.MapClaims{
 				model.CtxKeyAuthorizedUser: v,
 			}
 		}
-		return gjwt.MapClaims{}
+		return jwt.MapClaims{}
 	}
 }
 

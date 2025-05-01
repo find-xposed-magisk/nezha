@@ -49,17 +49,23 @@ type Provider struct {
 func (provider *Provider) SetRecords(ctx context.Context, zone string,
 	recs []libdns.Record) ([]libdns.Record, error) {
 	for _, rec := range recs {
-		provider.recordType = rec.Type
-		provider.ipType = recordToIPType(provider.recordType)
-		provider.ipAddr = rec.Value
-		provider.domain = fmt.Sprintf("%s.%s", rec.Name, strings.TrimSuffix(zone, "."))
+		switch rec.(type) {
+		case libdns.Address:
+			rr := rec.RR()
+			provider.recordType = rr.Type
+			provider.ipType = recordToIPType(provider.recordType)
+			provider.ipAddr = rr.Data
+			provider.domain = fmt.Sprintf("%s.%s", rr.Name, strings.TrimSuffix(zone, "."))
 
-		req, err := provider.prepareRequest(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
-		}
-		if _, err := utils.HttpClient.Do(req); err != nil {
-			return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
+			req, err := provider.prepareRequest(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
+			}
+			if _, err := utils.HttpClient.Do(req); err != nil {
+				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported record type: %T", rec)
 		}
 	}
 
