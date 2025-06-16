@@ -309,3 +309,61 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	wg.Wait()
 	return &resp, nil
 }
+
+// Batch move servers to other user
+// @Summary Batch move servers to other user
+// @Security BearerAuth
+// @Schemes
+// @Description Batch move servers to other user
+// @Tags auth required
+// @Accept json
+// @Param request body model.BatchMoveServerForm true "BatchMoveServerForm"
+// @Produce json
+// @Success 200 {object} model.CommonResponse[any]
+// @Router /batch-move/server [post]
+func batchMoveServer(c *gin.Context) (any, error) {
+	var moveForm model.BatchMoveServerForm
+	if err := c.ShouldBindJSON(&moveForm); err != nil {
+		return nil, err
+	}
+
+	if !singleton.ServerShared.CheckPermission(c, slices.Values(moveForm.Ids)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if moveForm.ToUser == 0 {
+		return nil, singleton.Localizer.ErrorT("user id is required")
+	}
+
+	singleton.UserLock.RLock()
+	defer singleton.UserLock.RUnlock()
+	if _, ok := singleton.UserInfoMap[moveForm.ToUser]; !ok {
+		return nil, singleton.Localizer.ErrorT("user id %d does not exist", moveForm.ToUser)
+	}
+
+	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Server{}).Where("id in (?)", moveForm.ToUser).Update("user_id", moveForm.ToUser).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, newGormError("%v", err)
+	}
+
+	idsMap := make(map[uint64]bool)
+	for _, id := range moveForm.Ids {
+		idsMap[id] = true
+	}
+
+	singleton.ServerShared.Range(func(_ uint64, s *model.Server) bool {
+		if s == nil || !idsMap[s.ID] {
+			return true
+		}
+		s.UserID = moveForm.ToUser
+		return true
+	})
+
+	return nil, nil
+}

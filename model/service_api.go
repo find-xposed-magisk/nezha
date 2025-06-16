@@ -53,3 +53,8 @@ type ServiceResponse struct {
 	Services           map[uint64]ServiceResponseItem `json:"services,omitempty"`
 	CycleTransferStats map[uint64]CycleTransferStats  `json:"cycle_transfer_stats,omitempty"`
 }
+
+type BatchMoveServerForm struct {
+	Ids    []uint64 `json:"ids,omitempty" validate:"required"`
+	ToUser uint64   `json:"to_user,omitempty" validate:"required"`
+}
