@@ -1,7 +1,7 @@
 package model
 
 type UserForm struct {
-	Role     uint8  `json:"role,omitempty"`
+	Role     Role   `json:"role,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty" gorm:"type:char(72)"`
 }

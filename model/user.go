@@ -8,8 +8,14 @@ import (
 	"gorm.io/gorm"
 )
 
+type Role uint8
+
+func (r Role) IsAdmin() bool {
+	return r == RoleAdmin
+}
+
 const (
-	RoleAdmin uint8 = iota
+	RoleAdmin Role = iota
 	RoleMember
 )
 
@@ -19,13 +25,13 @@ type User struct {
 	Common
 	Username       string `json:"username,omitempty" gorm:"uniqueIndex"`
 	Password       string `json:"password,omitempty" gorm:"type:char(72)"`
-	Role           uint8  `json:"role,omitempty"`
+	Role           Role   `json:"role,omitempty"`
 	AgentSecret    string `json:"agent_secret,omitempty" gorm:"type:char(32)"`
 	RejectPassword bool   `json:"reject_password,omitempty"`
 }
 
 type UserInfo struct {
-	Role        uint8
+	Role        Role
 	AgentSecret string
 }
 

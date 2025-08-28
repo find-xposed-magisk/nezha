@@ -133,7 +133,7 @@ func createUser(c *gin.Context) (uint64, error) {
 	if uf.Username == "" {
 		return 0, singleton.Localizer.ErrorT("username can't be empty")
 	}
-	if uf.Role != model.RoleAdmin && uf.Role != model.RoleMember {
+	if uf.Role > model.RoleMember {
 		return 0, singleton.Localizer.ErrorT("invalid role")
 	}
 
@@ -195,7 +195,7 @@ func listOnlineUser(c *gin.Context) (*model.Value[[]*model.OnlineUser], error) {
 	var isAdmin bool
 	u, ok := c.Get(model.CtxKeyAuthorizedUser)
 	if ok {
-		isAdmin = u.(*model.User).Role == model.RoleAdmin
+		isAdmin = u.(*model.User).Role.IsAdmin()
 	}
 	limit, err := strconv.Atoi(c.Query("limit"))
 	if err != nil || limit < 1 {

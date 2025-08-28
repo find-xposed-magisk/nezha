@@ -24,11 +24,11 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 	var isAdmin bool
 	if authorized {
 		user := u.(*model.User)
-		isAdmin = user.Role == model.RoleAdmin
+		isAdmin = user.Role.IsAdmin()
 	}
 
 	config := *singleton.Conf
-	config.Language = strings.Replace(config.Language, "_", "-", -1)
+	config.Language = strings.ReplaceAll(config.Language, "_", "-")
 
 	conf := model.SettingResponse{
 		Config: model.Setting{
@@ -89,7 +89,7 @@ func updateConfig(c *gin.Context) (any, error) {
 		return nil, errors.New("invalid user template")
 	}
 
-	singleton.Conf.Language = strings.Replace(sf.Language, "-", "_", -1)
+	singleton.Conf.Language = strings.ReplaceAll(sf.Language, "-", "_")
 
 	singleton.Conf.EnableIPChangeNotification = sf.EnableIPChangeNotification
 	singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
