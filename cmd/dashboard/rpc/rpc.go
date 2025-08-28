@@ -177,14 +177,14 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 }
 
 func canSendTaskToServer(task *model.Service, server *model.Server) bool {
-	var role uint8
+	var role model.Role
 	singleton.UserLock.RLock()
-	if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
+	if u, ok := singleton.UserInfoMap[task.UserID]; !ok {
 		role = model.RoleMember
 	} else {
 		role = u.Role
 	}
 	singleton.UserLock.RUnlock()
 
-	return task.UserID == server.UserID || role == model.RoleAdmin
+	return task.UserID == server.UserID || role.IsAdmin()
 }

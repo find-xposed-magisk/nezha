@@ -223,7 +223,7 @@ func adminHandler[T any](handler handlerFunc[T]) func(*gin.Context) {
 		}
 
 		user := *auth.(*model.User)
-		if user.Role != model.RoleAdmin {
+		if !user.Role.IsAdmin() {
 			c.JSON(http.StatusOK, newErrorResponse(singleton.Localizer.ErrorT("permission denied")))
 			return
 		}
