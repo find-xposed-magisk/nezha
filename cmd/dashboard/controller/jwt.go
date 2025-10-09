@@ -60,8 +60,17 @@ func payloadFunc() func(data any) jwt.MapClaims {
 func identityHandler() func(c *gin.Context) any {
 	return func(c *gin.Context) any {
 		claims := jwt.ExtractClaims(c)
-		userId := claims["user_id"].(string)
-		tokenIP := claims["ip"].(string)
+
+		userId, ok := claims["user_id"].(string)
+		if !ok {
+			return nil
+		}
+
+		tokenIP, ok := claims["ip"].(string)
+		if !ok {
+			return nil
+		}
+
 		currentIP := c.GetString(model.CtxKeyRealIPStr)
 
 		if tokenIP != currentIP {
