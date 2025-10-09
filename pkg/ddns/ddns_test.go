@@ -2,7 +2,6 @@ package ddns
 
 import (
 	"context"
-	"os"
 	"testing"
 )
 
@@ -13,10 +12,6 @@ type testSt struct {
 }
 
 func TestSplitDomainSOA(t *testing.T) {
-	if ci := os.Getenv("CI"); ci != "" { // skip if test on CI
-		return
-	}
-
 	cases := []testSt{
 		{
 			domain: "www.example.co.uk",

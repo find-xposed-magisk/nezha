@@ -50,10 +50,8 @@ func initParams() *jwt.GinJWTMiddleware {
 
 func payloadFunc() func(data any) jwt.MapClaims {
 	return func(data any) jwt.MapClaims {
-		if v, ok := data.(string); ok {
-			return jwt.MapClaims{
-				model.CtxKeyAuthorizedUser: v,
-			}
+		if v, ok := data.(map[string]interface{}); ok {
+			return v
 		}
 		return jwt.MapClaims{}
 	}
@@ -62,7 +60,15 @@ func payloadFunc() func(data any) jwt.MapClaims {
 func identityHandler() func(c *gin.Context) any {
 	return func(c *gin.Context) any {
 		claims := jwt.ExtractClaims(c)
-		userId := claims[model.CtxKeyAuthorizedUser].(string)
+		userId := claims["user_id"].(string)
+		tokenIP := claims["ip"].(string)
+		currentIP := c.GetString(model.CtxKeyRealIPStr)
+
+		if tokenIP != currentIP {
+			// IP地址不匹配，token无效
+			return nil
+		}
+
 		var user model.User
 		if err := singleton.DB.First(&user, userId).Error; err != nil {
 			return nil
@@ -109,7 +115,12 @@ func authenticator() func(c *gin.Context) (any, error) {
 
 		model.UnblockIP(singleton.DB, realip, model.BlockIDUnknownUser)
 		model.UnblockIP(singleton.DB, realip, int64(user.ID))
-		return utils.Itoa(user.ID), nil
+
+		// 返回用户ID和IP地址的组合，用于在payloadFunc中设置JWT claims
+		return map[string]interface{}{
+			"user_id": utils.Itoa(user.ID),
+			"ip":      realip,
+		}, nil
 	}
 }
 
@@ -174,14 +185,16 @@ func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 			return
 		}
 
+		realIP := c.GetString(model.CtxKeyRealIPStr)
+
 		c.Set("JWT_PAYLOAD", claims)
 		identity := mw.IdentityHandler(c)
 
 		if identity != nil {
-			model.UnblockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.BlockIDToken)
+			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
 		} else {
-			if err := model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken); err != nil {
+			if err := model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken); err != nil {
 				waf.ShowBlockPage(c, err)
 				return
 			}

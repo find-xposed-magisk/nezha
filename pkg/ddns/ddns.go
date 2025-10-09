@@ -114,6 +114,10 @@ func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (pr
 				if soa, ok := r.Answer[0].(*dns.SOA); ok {
 					zone := soa.Hdr.Name
 					prefix := libdns.RelativeName(domain, zone)
+					// Convert "@" to empty string for zone apex
+					if prefix == "@" {
+						prefix = ""
+					}
 					return prefix, zone, nil
 				}
 			}
