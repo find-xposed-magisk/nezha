@@ -177,7 +177,10 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 			}
 		}
 
-		tokenString, _, err := jwtConfig.TokenGenerator(fmt.Sprintf("%d", bind.UserID))
+		tokenString, _, err := jwtConfig.TokenGenerator(map[string]interface{}{
+			"user_id": fmt.Sprintf("%d", bind.UserID),
+			"ip":      realip,
+		})
 		if err != nil {
 			return nil, err
 		}
