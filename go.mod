@@ -1,6 +1,6 @@
 module github.com/nezhahq/nezha
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/appleboy/gin-jwt/v2 v2.10.3
@@ -26,8 +26,10 @@ require (
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/stretchr/testify v1.10.0
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.0
+	github.com/swaggo/swag v1.16.4
 	github.com/tidwall/gjson v1.18.0
 	golang.org/x/crypto v0.37.0
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
@@ -74,7 +76,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/swaggo/swag v1.16.4 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
