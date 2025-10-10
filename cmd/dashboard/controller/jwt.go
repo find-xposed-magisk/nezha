@@ -75,6 +75,7 @@ func identityHandler() func(c *gin.Context) any {
 
 		if tokenIP != currentIP {
 			// IP地址不匹配，token无效
+			c.Set(model.CtxKeyIsIPMismatch, true)
 			return nil
 		}
 
@@ -203,8 +204,9 @@ func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
 		} else {
-			if err := model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken); err != nil {
-				waf.ShowBlockPage(c, err)
+			isIpMismatch := c.GetBool(model.CtxKeyIsIPMismatch)
+			if !isIpMismatch {
+				waf.ShowBlockPage(c, model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken))
 				return
 			}
 		}
