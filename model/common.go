@@ -15,6 +15,7 @@ import (
 const (
 	CtxKeyAuthorizedUser = "ckau"
 	CtxKeyRealIPStr      = "ckri"
+	CtxKeyIsIPMismatch   = "ckipm"
 )
 
 const (
