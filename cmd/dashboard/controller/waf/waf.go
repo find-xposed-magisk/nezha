@@ -50,8 +50,14 @@ func Waf(c *gin.Context) {
 }
 
 func ShowBlockPage(c *gin.Context, err error) {
+	var errMsg string
+	if err != nil {
+		errMsg = err.Error()
+	} else {
+		errMsg = "you were blocked by nezha WAF"
+	}
 	c.Writer.WriteHeader(http.StatusForbidden)
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.Writer.WriteString(strings.Replace(errorPageTemplate, "{error}", err.Error(), 1))
+	c.Writer.WriteString(strings.Replace(errorPageTemplate, "{error}", errMsg, 1))
 	c.Abort()
 }
