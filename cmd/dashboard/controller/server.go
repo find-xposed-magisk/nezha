@@ -342,7 +342,7 @@ func batchMoveServer(c *gin.Context) (any, error) {
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.Server{}).Where("id in (?)", moveForm.ToUser).Update("user_id", moveForm.ToUser).Error; err != nil {
+		if err := tx.Model(&model.Server{}).Where("id in (?)", moveForm.Ids).Update("user_id", moveForm.ToUser).Error; err != nil {
 			return err
 		}
 		return nil
@@ -357,13 +357,12 @@ func batchMoveServer(c *gin.Context) (any, error) {
 		idsMap[id] = true
 	}
 
-	singleton.ServerShared.Range(func(_ uint64, s *model.Server) bool {
+	for _, s := range singleton.ServerShared.Range {
 		if s == nil || !idsMap[s.ID] {
-			return true
+			continue
 		}
 		s.UserID = moveForm.ToUser
-		return true
-	})
+	}
 
 	return nil, nil
 }
