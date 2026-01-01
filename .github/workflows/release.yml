@@ -107,10 +107,10 @@ jobs:
           done
 
       - name: Release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          artifacts: "assets/*/*/*.zip"
-          generateReleaseNotes: true
+          files: "assets/*/*/*.zip"
+          generate_release_notes: true
 
       - name: Purge jsdelivr cache
         run: |
