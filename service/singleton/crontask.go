@@ -110,11 +110,11 @@ func (c *CronClass) sortList() {
 	c.sortedList = sortedList
 }
 
-func (c *CronClass) SendTriggerTasks(taskIDs []uint64, triggerServer uint64) {
+func (c *CronClass) SendTriggerTasks(taskIDs []uint64, triggerServer uint64, triggerOwner uint64) {
 	c.listMu.RLock()
 	var cronLists []*model.Cron
 	for _, taskID := range taskIDs {
-		if c, ok := c.list[taskID]; ok {
+		if c, ok := c.list[taskID]; ok && cronCanBeTriggeredByOwner(c, triggerOwner) {
 			cronLists = append(cronLists, c)
 		}
 	}
@@ -124,6 +124,10 @@ func (c *CronClass) SendTriggerTasks(taskIDs []uint64, triggerServer uint64) {
 	for _, c := range cronLists {
 		go CronTrigger(c, triggerServer)()
 	}
+}
+
+func cronCanBeTriggeredByOwner(cr *model.Cron, triggerOwner uint64) bool {
+	return cr.UserID == triggerOwner || userIsAdmin(triggerOwner)
 }
 
 func ManualTrigger(cr *model.Cron) {
@@ -141,6 +145,9 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				return
 			}
 			if s, ok := ServerShared.Get(triggerServer[0]); ok {
+				if !cronCanSendToServer(cr, s) {
+					return
+				}
 				if s.TaskStream != nil {
 					s.TaskStream.Send(&pb.Task{
 						Id:   cr.ID,
@@ -158,6 +165,9 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 		}
 
 		for _, s := range ServerShared.Range {
+			if !cronCanSendToServer(cr, s) {
+				continue
+			}
 			if cr.Cover == model.CronCoverAll && crIgnoreMap[s.ID] {
 				continue
 			}
@@ -178,4 +188,20 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 			}
 		}
 	}
+}
+
+func cronCanSendToServer(cr *model.Cron, server *model.Server) bool {
+	return cr.UserID == server.UserID || userIsAdmin(cr.UserID)
+}
+
+func userIsAdmin(userID uint64) bool {
+	if userID == 0 {
+		return true
+	}
+
+	UserLock.RLock()
+	defer UserLock.RUnlock()
+
+	userInfo, ok := UserInfoMap[userID]
+	return ok && userInfo.Role.IsAdmin()
 }

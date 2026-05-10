@@ -167,7 +167,7 @@ func checkStatus() {
 					alertsPrevState[alert.ID][server.ID] = _RuleCheckFail
 					message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Incident"),
 						server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
-					go CronShared.SendTriggerTasks(alert.FailTriggerTasks, curServer.ID)
+					go CronShared.SendTriggerTasks(alert.FailTriggerTasks, curServer.ID, alert.UserID)
 					go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID), &curServer)
 					// 清除恢复通知的静音缓存
 					NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
@@ -177,7 +177,7 @@ func checkStatus() {
 				if alertsPrevState[alert.ID][server.ID] == _RuleCheckFail {
 					message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Resolved"),
 						server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
-					go CronShared.SendTriggerTasks(alert.RecoverTriggerTasks, curServer.ID)
+					go CronShared.SendTriggerTasks(alert.RecoverTriggerTasks, curServer.ID, alert.UserID)
 					go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), &curServer)
 					// 清除失败通知的静音缓存
 					NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
