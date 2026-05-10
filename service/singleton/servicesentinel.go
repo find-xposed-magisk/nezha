@@ -744,10 +744,10 @@ func notifyCheck(r *ReportData, m map[uint64]*model.Server,
 		reporterServer := m[r.Reporter]
 		if stateCode == StatusGood && lastStatus != stateCode {
 			// 当前状态正常 前序状态非正常时 触发恢复任务
-			go CronShared.SendTriggerTasks(ss.RecoverTriggerTasks, reporterServer.ID)
+			go CronShared.SendTriggerTasks(ss.RecoverTriggerTasks, reporterServer.ID, ss.UserID)
 		} else if lastStatus == StatusGood && lastStatus != stateCode {
 			// 前序状态正常 当前状态非正常时 触发失败任务
-			go CronShared.SendTriggerTasks(ss.FailTriggerTasks, reporterServer.ID)
+			go CronShared.SendTriggerTasks(ss.FailTriggerTasks, reporterServer.ID, ss.UserID)
 		}
 	}
 }
