@@ -1,10 +1,14 @@
 package model
 
 import (
+	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -24,6 +28,35 @@ const (
 	NotificationRequestMethodGET
 	NotificationRequestMethodPOST
 )
+
+var errNotificationURLNotAllowed = errors.New("notification URL target is not allowed")
+
+var notificationBlockedCIDRs = mustParseNotificationCIDRs([]string{
+	"0.0.0.0/8",
+	"10.0.0.0/8",
+	"100.64.0.0/10",
+	"127.0.0.0/8",
+	"169.254.0.0/16",
+	"172.16.0.0/12",
+	"192.0.0.0/24",
+	"192.0.2.0/24",
+	"192.168.0.0/16",
+	"198.18.0.0/15",
+	"198.51.100.0/24",
+	"203.0.113.0/24",
+	"224.0.0.0/4",
+	"240.0.0.0/4",
+	"::/128",
+	"::1/128",
+	"::ffff:0:0/96",
+	"64:ff9b::/96",
+	"100::/64",
+	"2001::/23",
+	"2001:db8::/32",
+	"fc00::/7",
+	"fe80::/10",
+	"ff00::/8",
+})
 
 type NotificationServerBundle struct {
 	Notification *Notification
@@ -111,13 +144,8 @@ func (n *Notification) setRequestHeader(req *http.Request) error {
 }
 
 func (ns *NotificationServerBundle) Send(message string) error {
-	var client *http.Client
 	n := ns.Notification
-	if n.VerifyTLS != nil && *n.VerifyTLS {
-		client = utils.HttpClient
-	} else {
-		client = utils.HttpClientSkipTlsVerify
-	}
+	verifyTLS := n.VerifyTLS != nil && *n.VerifyTLS
 
 	reqBody, err := ns.reqBody(message)
 	if err != nil {
@@ -129,7 +157,13 @@ func (ns *NotificationServerBundle) Send(message string) error {
 		return err
 	}
 
-	req, err := http.NewRequest(reqMethod, ns.reqURL(message), strings.NewReader(reqBody))
+	reqURL := ns.reqURL(message)
+	client, err := newNotificationHTTPClient(reqURL, verifyTLS)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(reqMethod, reqURL, strings.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -149,13 +183,113 @@ func (ns *NotificationServerBundle) Send(message string) error {
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%d@%s %s", resp.StatusCode, resp.Status, string(body))
+		return notificationResponseError(resp)
 	} else {
 		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 
 	return nil
+}
+
+func newNotificationHTTPClient(rawURL string, verifyTLS bool) (*http.Client, error) {
+	parsedURL, ip, err := resolveNotificationTarget(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	port := parsedURL.Port()
+	if port == "" {
+		if parsedURL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	targetAddress := net.JoinHostPort(ip.String(), port)
+	dialer := &net.Dialer{}
+
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, targetAddress)
+			},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !verifyTLS, ServerName: parsedURL.Hostname()},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: time.Minute * 10,
+	}, nil
+}
+
+func notificationResponseError(resp *http.Response) error {
+	_, _ = io.CopyN(io.Discard, resp.Body, 4096)
+	return fmt.Errorf("%d@%s", resp.StatusCode, resp.Status)
+}
+
+func resolveNotificationTarget(rawURL string) (*url.URL, net.IP, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, nil, errNotificationURLNotAllowed
+	}
+
+	host := parsedURL.Hostname()
+	if host == "" {
+		return nil, nil, errNotificationURLNotAllowed
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !notificationIPAllowed(ip) {
+			return nil, nil, errNotificationURLNotAllowed
+		}
+		return parsedURL, ip, nil
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(ips) == 0 {
+		return nil, nil, errNotificationURLNotAllowed
+	}
+	for _, ip := range ips {
+		if !notificationIPAllowed(ip) {
+			return nil, nil, errNotificationURLNotAllowed
+		}
+	}
+
+	return parsedURL, ips[0], nil
+}
+
+func notificationIPAllowed(ip net.IP) bool {
+	parsedIP, ok := netipFromIP(ip)
+	if !ok {
+		return false
+	}
+	for _, cidr := range notificationBlockedCIDRs {
+		if cidr.Contains(parsedIP) {
+			return false
+		}
+	}
+	return parsedIP.IsGlobalUnicast()
+}
+
+func netipFromIP(ip net.IP) (netip.Addr, bool) {
+	parsedIP, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return parsedIP.Unmap(), true
+}
+
+func mustParseNotificationCIDRs(cidrs []string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		prefixes = append(prefixes, netip.MustParsePrefix(cidr))
+	}
+	return prefixes
 }
 
 // replaceParamInString 替换字符串中的占位符

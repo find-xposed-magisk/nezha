@@ -1,6 +1,7 @@
 package model
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -232,5 +233,72 @@ func TestNotification(t *testing.T) {
 
 	for _, c := range cases {
 		execCase(t, c)
+	}
+}
+
+func TestNotificationResponseErrorDoesNotReflectNonSuccessResponseBody(t *testing.T) {
+	const internalResponseBody = "internal service says token=secret"
+
+	resp := &http.Response{
+		StatusCode: http.StatusTeapot,
+		Status:     "418 I'm a teapot",
+		Body:       io.NopCloser(strings.NewReader(internalResponseBody)),
+	}
+
+	err := notificationResponseError(resp)
+	if strings.Contains(err.Error(), internalResponseBody) {
+		t.Fatalf("expected upstream response body to be hidden from error, got %q", err.Error())
+	}
+}
+
+func TestNotificationSendRejectsLoopbackTarget(t *testing.T) {
+	verifyTLS := true
+	notification := &Notification{
+		URL:           "http://127.0.0.1/internal",
+		RequestMethod: NotificationRequestMethodGET,
+		VerifyTLS:     &verifyTLS,
+	}
+
+	bundle := NotificationServerBundle{
+		Notification: notification,
+		Loc:          time.Local,
+	}
+
+	err := bundle.Send("probe")
+	if err == nil {
+		t.Fatal("expected loopback notification URL to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected not allowed error, got %q", err.Error())
+	}
+}
+
+func TestNotificationTargetRejectsSpecialUseAddresses(t *testing.T) {
+	cases := []string{
+		"http://100.64.0.1/",         // CGNAT
+		"http://192.0.2.1/",          // documentation range
+		"http://[fc00::1]/",          // IPv6 unique local
+		"http://[2001:db8::1]/",      // IPv6 documentation range
+		"http://[::ffff:127.0.0.1]/", // IPv4-mapped loopback
+	}
+
+	for _, rawURL := range cases {
+		if _, _, err := resolveNotificationTarget(rawURL); err == nil {
+			t.Fatalf("expected %s to be rejected", rawURL)
+		}
+	}
+}
+
+func TestNotificationHTTPClientPreservesTLSServerName(t *testing.T) {
+	client, err := newNotificationHTTPClient("https://example.com/webhook", true)
+	if err != nil {
+		t.Fatalf("expected public HTTPS URL to create client: %v", err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected http.Transport, got %T", client.Transport)
+	}
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.ServerName != "example.com" {
+		t.Fatalf("expected TLS ServerName example.com, got %#v", transport.TLSClientConfig)
 	}
 }
