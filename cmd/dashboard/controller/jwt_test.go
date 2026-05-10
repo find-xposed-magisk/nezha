@@ -1,12 +1,18 @@
 package controller
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/i18n"
+	"github.com/nezhahq/nezha/service/singleton"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestPayloadFunc(t *testing.T) {
@@ -76,4 +82,75 @@ func TestIPBinding(t *testing.T) {
 		assert.Equal(t, "123", claims["user_id"])
 		assert.Nil(t, claims["ip"])
 	})
+}
+
+func TestValidateRuleRejectsForeignTriggerTasks(t *testing.T) {
+	ctx := newMemberValidationContext(t)
+
+	alertRule := &model.AlertRule{
+		Common:              model.Common{UserID: 200},
+		Name:                "member alert",
+		Rules:               []*model.Rule{{Type: "offline", Duration: 3}},
+		FailTriggerTasks:    []uint64{42},
+		RecoverTriggerTasks: []uint64{42},
+	}
+
+	assert.Error(t, validateRule(ctx, alertRule))
+}
+
+func TestValidateServersRejectsForeignTriggerTasks(t *testing.T) {
+	ctx := newMemberValidationContext(t)
+
+	service := &model.Service{
+		Common:              model.Common{UserID: 200},
+		Name:                "member service",
+		EnableTriggerTask:   true,
+		FailTriggerTasks:    []uint64{42},
+		RecoverTriggerTasks: []uint64{42},
+		SkipServers:         map[uint64]bool{},
+	}
+
+	assert.Error(t, validateServers(ctx, service))
+}
+
+func newMemberValidationContext(t *testing.T) *gin.Context {
+	t.Helper()
+
+	originalDB := singleton.DB
+	originalLoc := singleton.Loc
+	originalLocalizer := singleton.Localizer
+	originalCronShared := singleton.CronShared
+	originalServerShared := singleton.ServerShared
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	assert.NoError(t, err)
+	assert.NoError(t, db.AutoMigrate(&model.Cron{}, &model.Server{}))
+	assert.NoError(t, db.Create(&model.Cron{
+		Common:   model.Common{ID: 42, UserID: 1},
+		Name:     "foreign trigger task",
+		Command:  "admin-maintenance",
+		TaskType: model.CronTypeTriggerTask,
+		Cover:    model.CronCoverAlertTrigger,
+	}).Error)
+
+	singleton.DB = db
+	singleton.Loc = time.Local
+	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
+	singleton.CronShared = singleton.NewCronClass()
+	singleton.ServerShared = singleton.NewServerClass()
+	t.Cleanup(func() {
+		singleton.DB = originalDB
+		singleton.Loc = originalLoc
+		singleton.Localizer = originalLocalizer
+		singleton.CronShared = originalCronShared
+		singleton.ServerShared = originalServerShared
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set(model.CtxKeyAuthorizedUser, &model.User{
+		Common: model.Common{ID: 200},
+		Role:   model.RoleMember,
+	})
+	return ctx
 }

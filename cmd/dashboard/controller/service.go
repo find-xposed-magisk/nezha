@@ -545,5 +545,14 @@ func validateServers(c *gin.Context, ss *model.Service) error {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// Trigger task IDs are user-controlled; validate them here so services cannot
+	// reference another user's cron and later execute it from the sentinel path.
+	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.FailTriggerTasks)) {
+		return singleton.Localizer.ErrorT("permission denied")
+	}
+	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.RecoverTriggerTasks)) {
+		return singleton.Localizer.ErrorT("permission denied")
+	}
+
 	return nil
 }
