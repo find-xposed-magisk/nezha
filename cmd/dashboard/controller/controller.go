@@ -145,10 +145,10 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/nat/:id", commonHandler(updateNAT))
 	auth.POST("/batch-delete/nat", commonHandler(batchDeleteNAT))
 
-	auth.GET("/waf", pCommonHandler(listBlockedAddress))
+	auth.GET("/waf", pAdminHandler(listBlockedAddress))
 	auth.POST("/batch-delete/waf", adminHandler(batchDeleteBlockedAddress))
 
-	auth.GET("/online-user", pCommonHandler(listOnlineUser))
+	auth.GET("/online-user", pAdminHandler(listOnlineUser))
 	auth.POST("/online-user/batch-block", adminHandler(batchBlockOnlineUser))
 
 	auth.PATCH("/setting", adminHandler(updateConfig))
@@ -275,6 +275,29 @@ func listHandler[S ~[]E, E model.CommonInterface](handler handlerFunc[S]) func(*
 
 func pCommonHandler[S ~[]E, E any](handler pHandlerFunc[S, E]) func(*gin.Context) {
 	return func(c *gin.Context) {
+		data, err := handler(c)
+		if err != nil {
+			c.JSON(http.StatusOK, newErrorResponse(err))
+			return
+		}
+
+		c.JSON(http.StatusOK, model.PaginatedResponse[S, E]{Success: true, Data: data})
+	}
+}
+
+func pAdminHandler[S ~[]E, E any](handler pHandlerFunc[S, E]) func(*gin.Context) {
+	return func(c *gin.Context) {
+		auth, ok := c.Get(model.CtxKeyAuthorizedUser)
+		if !ok {
+			c.JSON(http.StatusOK, newErrorResponse(singleton.Localizer.ErrorT("unauthorized")))
+			return
+		}
+		user := *auth.(*model.User)
+		if !user.Role.IsAdmin() {
+			c.JSON(http.StatusOK, newErrorResponse(singleton.Localizer.ErrorT("permission denied")))
+			return
+		}
+
 		data, err := handler(c)
 		if err != nil {
 			c.JSON(http.StatusOK, newErrorResponse(err))
