@@ -1,10 +1,48 @@
 package model
 
 import (
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
+
+func TestCommonHasPermission(t *testing.T) {
+	resource := &Common{ID: 10, UserID: 100}
+
+	t.Run("unauthenticated denied", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		if resource.HasPermission(ctx) {
+			t.Fatal("expected unauthenticated request to be denied")
+		}
+	})
+
+	t.Run("owner allowed", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set(CtxKeyAuthorizedUser, &User{Common: Common{ID: 100}, Role: RoleMember})
+		if !resource.HasPermission(ctx) {
+			t.Fatal("expected owner to be allowed")
+		}
+	})
+
+	t.Run("foreign member denied", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set(CtxKeyAuthorizedUser, &User{Common: Common{ID: 200}, Role: RoleMember})
+		if resource.HasPermission(ctx) {
+			t.Fatal("expected non-owner member to be denied")
+		}
+	})
+
+	t.Run("admin allowed", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set(CtxKeyAuthorizedUser, &User{Common: Common{ID: 1}, Role: RoleAdmin})
+		if !resource.HasPermission(ctx) {
+			t.Fatal("expected admin to be allowed")
+		}
+	})
+}
 
 func TestSearchByID(t *testing.T) {
 	t.Run("WithoutPriorityList", func(t *testing.T) {
