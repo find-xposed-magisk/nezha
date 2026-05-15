@@ -39,8 +39,12 @@ func listNotificationGroup(c *gin.Context) ([]*model.NotificationGroupResponseIt
 		groupNotifications[n.NotificationGroupID] = append(groupNotifications[n.NotificationGroupID], n.NotificationID)
 	}
 
+	isAdmin := callerIsAdmin(c)
 	ngRes := make([]*model.NotificationGroupResponseItem, 0, len(ng))
 	for _, n := range ng {
+		if !isAdmin && !n.HasPermission(c) {
+			continue
+		}
 		ngRes = append(ngRes, &model.NotificationGroupResponseItem{
 			Group:         n,
 			Notifications: groupNotifications[n.ID],
