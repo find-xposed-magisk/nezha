@@ -273,24 +273,69 @@ func TestNotificationSendRejectsLoopbackTarget(t *testing.T) {
 	}
 }
 
-func TestNotificationTargetRejectsSpecialUseAddresses(t *testing.T) {
+func TestNotificationTargetRejectsBlockedRanges(t *testing.T) {
 	cases := []string{
-		"http://100.64.0.1/",         // CGNAT
-		"http://192.0.2.1/",          // documentation range
-		"http://[fc00::1]/",          // IPv6 unique local
-		"http://[2001:db8::1]/",      // IPv6 documentation range
-		"http://[::ffff:127.0.0.1]/", // IPv4-mapped loopback
+		"http://0.0.0.0/",
+		"http://10.1.2.3/",
+		"http://100.64.0.1/",
+		"http://127.0.0.1/",
+		"http://127.255.255.254/",
+		"http://169.254.169.254/",
+		"http://172.16.0.1/",
+		"http://192.0.0.1/",
+		"http://192.0.2.1/",
+		"http://192.168.1.1/",
+		"http://198.18.0.1/",
+		"http://198.51.100.1/",
+		"http://203.0.113.1/",
+		"http://224.0.0.1/",
+		"http://240.0.0.1/",
+		"http://[::]/",
+		"http://[::1]/",
+		"http://[::ffff:127.0.0.1]/",
+		"http://[64:ff9b::1]/",
+		"http://[100::1]/",
+		"http://[2001:0:0:0:0:0:0:1]/",
+		"http://[2001:db8::1]/",
+		"http://[fc00::1]/",
+		"http://[fe80::1]/",
+		"http://[ff00::1]/",
+		"ftp://example.com/",
+		"file:///etc/passwd",
+		"http:///path",
 	}
 
 	for _, rawURL := range cases {
-		if _, _, err := resolveNotificationTarget(rawURL); err == nil {
-			t.Fatalf("expected %s to be rejected", rawURL)
-		}
+		t.Run(rawURL, func(t *testing.T) {
+			if _, _, err := resolveNotificationTarget(rawURL); err == nil {
+				t.Fatalf("expected %s to be rejected", rawURL)
+			}
+		})
+	}
+}
+
+func TestNotificationTargetAllowsPublicAddresses(t *testing.T) {
+	cases := []string{
+		"http://1.1.1.1/path",
+		"https://8.8.8.8/",
+		"https://[2606:4700:4700::1111]/",
+	}
+
+	for _, rawURL := range cases {
+		t.Run(rawURL, func(t *testing.T) {
+			parsedURL, _, err := resolveNotificationTarget(rawURL)
+			if err != nil {
+				t.Fatalf("expected %s to be allowed, got %v", rawURL, err)
+			}
+			if parsedURL == nil {
+				t.Fatalf("expected parsed url for %s", rawURL)
+			}
+		})
 	}
 }
 
 func TestNotificationHTTPClientPreservesTLSServerName(t *testing.T) {
-	client, err := newNotificationHTTPClient("https://example.com/webhook", true)
+	client, err := newNotificationHTTPClient("https://1.1.1.1/webhook", true)
 	if err != nil {
 		t.Fatalf("expected public HTTPS URL to create client: %v", err)
 	}
@@ -298,7 +343,22 @@ func TestNotificationHTTPClientPreservesTLSServerName(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected http.Transport, got %T", client.Transport)
 	}
-	if transport.TLSClientConfig == nil || transport.TLSClientConfig.ServerName != "example.com" {
-		t.Fatalf("expected TLS ServerName example.com, got %#v", transport.TLSClientConfig)
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.ServerName != "1.1.1.1" {
+		t.Fatalf("expected TLS ServerName 1.1.1.1, got %#v", transport.TLSClientConfig)
+	}
+}
+
+func TestNotificationHTTPClientRejectsRedirects(t *testing.T) {
+	client, err := newNotificationHTTPClient("https://1.1.1.1/webhook", true)
+	if err != nil {
+		t.Fatalf("expected client construction: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://1.1.1.1/start", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	via := []*http.Request{req}
+	if err := client.CheckRedirect(req, via); err != http.ErrUseLastResponse {
+		t.Fatalf("expected ErrUseLastResponse, got %v", err)
 	}
 }
