@@ -54,6 +54,10 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	if err := assertOwnsNotificationGroup(c, cf.NotificationGroupID); err != nil {
+		return 0, err
+	}
+
 	cr.UserID = getUid(c)
 	cr.TaskType = cf.TaskType
 	cr.Name = cf.Name
@@ -68,7 +72,6 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("scheduled tasks cannot be triggered by alarms")
 	}
 
-	// 对于计划任务类型，需要更新CronJob
 	var err error
 	if cf.TaskType == model.CronTypeCronTask {
 		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
@@ -110,6 +113,10 @@ func updateCron(c *gin.Context) (any, error) {
 
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(cf.Servers)) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if err := assertOwnsNotificationGroup(c, cf.NotificationGroupID); err != nil {
+		return nil, err
 	}
 
 	var cr model.Cron

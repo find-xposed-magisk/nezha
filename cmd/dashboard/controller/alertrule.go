@@ -194,13 +194,15 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 		return singleton.Localizer.ErrorT("need to configure at least a single rule")
 	}
 
-	// Trigger task IDs are user-controlled; validate them here so alerts cannot
-	// reference another user's cron and later execute it from the sentinel path.
 	if !singleton.CronShared.CheckPermission(c, slices.Values(r.FailTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
 	if !singleton.CronShared.CheckPermission(c, slices.Values(r.RecoverTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if err := assertOwnsNotificationGroup(c, r.NotificationGroupID); err != nil {
+		return err
 	}
 
 	return nil

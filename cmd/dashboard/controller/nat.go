@@ -53,10 +53,15 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	if server, ok := singleton.ServerShared.Get(nf.ServerID); ok {
-		if !server.HasPermission(c) {
-			return 0, singleton.Localizer.ErrorT("permission denied")
-		}
+	if nf.ServerID == 0 {
+		return 0, singleton.Localizer.ErrorT("have invalid server id")
+	}
+	server, ok := singleton.ServerShared.Get(nf.ServerID)
+	if !ok {
+		return 0, singleton.Localizer.ErrorT("have invalid server id")
+	}
+	if !server.HasPermission(c) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	uid := getUid(c)
@@ -101,10 +106,15 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if server, ok := singleton.ServerShared.Get(nf.ServerID); ok {
-		if !server.HasPermission(c) {
-			return nil, singleton.Localizer.ErrorT("permission denied")
-		}
+	if nf.ServerID == 0 {
+		return nil, singleton.Localizer.ErrorT("have invalid server id")
+	}
+	server, ok := singleton.ServerShared.Get(nf.ServerID)
+	if !ok {
+		return nil, singleton.Localizer.ErrorT("have invalid server id")
+	}
+	if !server.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	var n model.NAT
