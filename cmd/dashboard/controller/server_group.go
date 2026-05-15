@@ -27,10 +27,10 @@ func listServerGroup(c *gin.Context) ([]*model.ServerGroupResponseItem, error) {
 	}
 
 	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember
+	isAdmin := isMember && callerIsAdmin(c)
 
 	visibleServerIDs := make(map[uint64]struct{})
-	if !authorized {
+	if !isMember {
 		for _, server := range singleton.ServerShared.GetSortedListForGuest() {
 			visibleServerIDs[server.ID] = struct{}{}
 		}
@@ -42,7 +42,7 @@ func listServerGroup(c *gin.Context) ([]*model.ServerGroupResponseItem, error) {
 		return nil, err
 	}
 	for _, s := range sgs {
-		if !authorized {
+		if !isMember {
 			if _, ok := visibleServerIDs[s.ServerId]; !ok {
 				continue
 			}
@@ -55,6 +55,9 @@ func listServerGroup(c *gin.Context) ([]*model.ServerGroupResponseItem, error) {
 
 	var sgRes []*model.ServerGroupResponseItem
 	for _, s := range sg {
+		if isMember && !isAdmin && !s.HasPermission(c) {
+			continue
+		}
 		sgRes = append(sgRes, &model.ServerGroupResponseItem{
 			Group:   s,
 			Servers: groupServers[s.ID],
