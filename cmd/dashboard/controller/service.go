@@ -110,7 +110,7 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 	}
 
 	if !singleton.TSDBEnabled() {
-		return queryServiceHistoryFromDB(serviceID, period, response)
+		return queryServiceHistoryFromDB(c, serviceID, period, response)
 	}
 
 	result, err := singleton.TSDBShared.QueryServiceHistory(serviceID, period)
@@ -120,17 +120,21 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 
 	serverMap := singleton.ServerShared.GetList()
 
+	filtered := result.Servers[:0]
 	for i := range result.Servers {
-		if server, ok := serverMap[result.Servers[i].ServerID]; ok {
-			result.Servers[i].ServerName = server.Name
+		server, ok := serverMap[result.Servers[i].ServerID]
+		if !ok || !userCanViewServer(c, server) {
+			continue
 		}
+		result.Servers[i].ServerName = server.Name
+		filtered = append(filtered, result.Servers[i])
 	}
-	response.Servers = result.Servers
+	response.Servers = filtered
 
 	return response, nil
 }
 
-func queryServiceHistoryFromDB(serviceID uint64, period tsdb.QueryPeriod, response *model.ServiceHistoryResponse) (*model.ServiceHistoryResponse, error) {
+func queryServiceHistoryFromDB(c *gin.Context, serviceID uint64, period tsdb.QueryPeriod, response *model.ServiceHistoryResponse) (*model.ServiceHistoryResponse, error) {
 	since := time.Now().Add(-period.Duration())
 
 	var histories []model.ServiceHistory
@@ -146,11 +150,13 @@ func queryServiceHistoryFromDB(serviceID uint64, period tsdb.QueryPeriod, respon
 	}
 
 	for serverID, records := range grouped {
-		stats := model.ServerServiceStats{
-			ServerID: serverID,
+		server, ok := serverMap[serverID]
+		if !ok || !userCanViewServer(c, server) {
+			continue
 		}
-		if server, ok := serverMap[serverID]; ok {
-			stats.ServerName = server.Name
+		stats := model.ServerServiceStats{
+			ServerID:   serverID,
+			ServerName: server.Name,
 		}
 
 		var totalDelay float64
@@ -216,12 +222,10 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, singleton.Localizer.ErrorT("server not found")
 	}
 
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember
-
-	if server.HideForGuest && !authorized {
+	if !userCanViewServer(c, server) {
 		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
+	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
 
 	// 解析时间范围
 	periodStr := c.DefaultQuery("period", "1d")
@@ -373,16 +377,13 @@ func listServerWithServices(c *gin.Context) ([]uint64, error) {
 		}
 	}
 
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember
-
 	var ret []uint64
 	for id := range serverIDSet {
 		server, ok := serverMap[id]
 		if !ok || server == nil {
 			continue
 		}
-		if !server.HideForGuest || authorized {
+		if userCanViewServer(c, server) {
 			ret = append(ret, id)
 		}
 	}
@@ -545,13 +546,15 @@ func validateServers(c *gin.Context, ss *model.Service) error {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
 
-	// Trigger task IDs are user-controlled; validate them here so services cannot
-	// reference another user's cron and later execute it from the sentinel path.
 	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.FailTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
 	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.RecoverTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if err := assertOwnsNotificationGroup(c, ss.NotificationGroupID); err != nil {
+		return err
 	}
 
 	return nil

@@ -336,6 +336,10 @@ func batchMoveServer(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("user id is required")
 	}
 
+	if !callerIsAdmin(c) && moveForm.ToUser != getUid(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	singleton.UserLock.RLock()
 	defer singleton.UserLock.RUnlock()
 	if _, ok := singleton.UserInfoMap[moveForm.ToUser]; !ok {
@@ -412,10 +416,10 @@ func getServerMetrics(c *gin.Context) (*model.ServerMetricsResponse, error) {
 		return nil, singleton.Localizer.ErrorT("server not found")
 	}
 
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	if server.HideForGuest && !isMember {
+	if !userCanViewServer(c, server) {
 		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
+	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
 
 	metricName := c.Query("metric")
 	metricType, ok := serverMetricMap[metricName]
