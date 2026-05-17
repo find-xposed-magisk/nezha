@@ -121,9 +121,14 @@ func serverStream(c *gin.Context) (any, error) {
 	}
 
 	u, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	var userId uint64
+	var (
+		userId  uint64
+		isAdmin bool
+	)
 	if isMember {
-		userId = u.(*model.User).ID
+		user := u.(*model.User)
+		userId = user.ID
+		isAdmin = user.Role.IsAdmin()
 	}
 
 	singleton.AddOnlineUser(connId, &model.OnlineUser{
@@ -136,7 +141,7 @@ func serverStream(c *gin.Context) (any, error) {
 
 	count := 0
 	for {
-		stat, err := getServerStat(count == 0, isMember)
+		stat, err := getServerStat(count == 0, userId, isAdmin)
 		if err != nil {
 			continue
 		}
@@ -157,33 +162,18 @@ func serverStream(c *gin.Context) (any, error) {
 
 var requestGroup singleflight.Group
 
-func getServerStat(withPublicNote, authorized bool) ([]byte, error) {
-	v, err, _ := requestGroup.Do(fmt.Sprintf("serverStats::%t", authorized), func() (any, error) {
-		var serverList []*model.Server
-		if authorized {
-			serverList = singleton.ServerShared.GetSortedList()
-		} else {
-			serverList = singleton.ServerShared.GetSortedListForGuest()
-		}
-
-		servers := make([]model.StreamServer, 0, len(serverList))
-		for _, server := range serverList {
-			var countryCode string
-			if server.GeoIP != nil {
-				countryCode = server.GeoIP.CountryCode
-			}
-			servers = append(servers, model.StreamServer{
-				ID:           server.ID,
-				Name:         server.Name,
-				PublicNote:   utils.IfOr(withPublicNote, server.PublicNote, ""),
-				DisplayIndex: server.DisplayIndex,
-				Host:         utils.IfOr(authorized, server.Host, server.Host.Filter()),
-				State:        server.State,
-				CountryCode:  countryCode,
-				LastActive:   server.LastActive,
-			})
-		}
-
+// getServerStat returns the websocket frame the viewer is allowed to see.
+// The cache key must include the viewer's identity because the projection
+// depends on per-server ownership: prior to GHSA-hvv7-hfrh-7gxj this function
+// used a single isMember flag and leaked HideForGuest servers plus full Host
+// (PlatformVersion, agent Version, GPU) to every authenticated user.
+func getServerStat(withPublicNote bool, viewerUserID uint64, viewerIsAdmin bool) ([]byte, error) {
+	cacheKey := fmt.Sprintf("serverStats::%t::%t::%d", withPublicNote, viewerIsAdmin, viewerUserID)
+	v, err, _ := requestGroup.Do(cacheKey, func() (any, error) {
+		servers := filterServersForViewer(
+			singleton.ServerShared.GetSortedList(),
+			viewerUserID, viewerIsAdmin, withPublicNote,
+		)
 		return json.Marshal(model.StreamServerData{
 			Now:     time.Now().Unix() * 1000,
 			Online:  singleton.GetOnlineUserCount(),
@@ -192,4 +182,37 @@ func getServerStat(withPublicNote, authorized bool) ([]byte, error) {
 	})
 
 	return v.([]byte), err
+}
+
+// filterServersForViewer projects the global server list down to what a single
+// viewer is allowed to see. The rules are:
+//   - HideForGuest servers are visible only to their owner and to admins.
+//   - Non-owner / non-admin viewers (including authenticated members) get
+//     Host.Filter() output, which drops PlatformVersion and agent Version.
+//   - Admins are unconstrained.
+//
+// viewerUserID == 0 represents an unauthenticated guest.
+func filterServersForViewer(servers []*model.Server, viewerUserID uint64, viewerIsAdmin bool, withPublicNote bool) []model.StreamServer {
+	out := make([]model.StreamServer, 0, len(servers))
+	for _, server := range servers {
+		isOwnerOrAdmin := viewerIsAdmin || (viewerUserID != 0 && server.UserID == viewerUserID)
+		if server.HideForGuest && !isOwnerOrAdmin {
+			continue
+		}
+		var countryCode string
+		if server.GeoIP != nil {
+			countryCode = server.GeoIP.CountryCode
+		}
+		out = append(out, model.StreamServer{
+			ID:           server.ID,
+			Name:         server.Name,
+			PublicNote:   utils.IfOr(withPublicNote, server.PublicNote, ""),
+			DisplayIndex: server.DisplayIndex,
+			Host:         utils.IfOr(isOwnerOrAdmin, server.Host, server.Host.Filter()),
+			State:        server.State,
+			CountryCode:  countryCode,
+			LastActive:   server.LastActive,
+		})
+	}
+	return out
 }
