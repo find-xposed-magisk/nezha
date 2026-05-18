@@ -22,18 +22,30 @@ func initParams() *jwt.GinJWTMiddleware {
 		Key:         []byte(singleton.Conf.JWTSecretKey),
 		CookieName:  "nz-jwt",
 		SendCookie:  true,
-		Timeout:     time.Hour * time.Duration(singleton.Conf.JWTTimeout),
-		MaxRefresh:  time.Hour * time.Duration(singleton.Conf.JWTTimeout),
-		IdentityKey: model.CtxKeyAuthorizedUser,
-		PayloadFunc: payloadFunc(),
+		// Pin the signing algorithm so a future library default change (or an
+		// `alg: none` confusion attempt) cannot weaken token validation.
+		SigningAlgorithm: "HS256",
+		// Lax keeps OAuth callback redirects (top-level GET navigations from
+		// the provider domain) working while blocking cross-site POST CSRF.
+		// HttpOnly/Secure are intentionally left default: the frontend reads
+		// `!!document.cookie` for login-state display and many deployments
+		// terminate TLS at a proxy upstream — both warrant a separate change.
+		CookieSameSite: http.SameSiteLaxMode,
+		Timeout:        time.Hour * time.Duration(singleton.Conf.JWTTimeout),
+		MaxRefresh:     time.Hour * time.Duration(singleton.Conf.JWTTimeout),
+		IdentityKey:    model.CtxKeyAuthorizedUser,
+		PayloadFunc:    payloadFunc(),
 
 		IdentityHandler: identityHandler(),
 		Authenticator:   authenticator(),
 		Authorizator:    authorizator(),
 		Unauthorized:    unauthorized(),
-		TokenLookup:     "header: Authorization, query: token, cookie: nz-jwt",
-		TokenHeadName:   "Bearer",
-		TimeFunc:        time.Now,
+		// query: token still accepted because the WebSocket browser API
+		// cannot set Authorization headers; removing it would break the
+		// /ws/* routes until the frontend migrates to cookie auth.
+		TokenLookup:   "header: Authorization, query: token, cookie: nz-jwt",
+		TokenHeadName: "Bearer",
+		TimeFunc:      time.Now,
 
 		LoginResponse: func(c *gin.Context, code int, token string, expire time.Time) {
 			c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
