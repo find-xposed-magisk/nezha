@@ -11,6 +11,7 @@ import (
 )
 
 type ioStreamContext struct {
+	creatorUserID    uint64
 	userIo           io.ReadWriteCloser
 	agentIo          io.ReadWriteCloser
 	userIoConnectCh  chan struct{}
@@ -31,14 +32,45 @@ var bufPool = sync.Pool{
 	},
 }
 
-func (s *NezhaHandler) CreateStream(streamId string) {
+func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64) {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
 
 	s.ioStreams[streamId] = &ioStreamContext{
+		creatorUserID:    creatorUserID,
 		userIoConnectCh:  make(chan struct{}),
 		agentIoConnectCh: make(chan struct{}),
 	}
+}
+
+// IsStreamAuthorizedForUser checks whether the requesting user may attach to
+// the stream. A stream is reachable only by its creator or by an admin; any
+// other authenticated user must be rejected. Unknown streams are always
+// rejected.
+func (s *NezhaHandler) IsStreamAuthorizedForUser(streamId string, userID uint64, isAdmin bool) bool {
+	creator, found := s.StreamOwnership(streamId)
+	if !found {
+		return false
+	}
+	if isAdmin {
+		return true
+	}
+	return creator == userID
+}
+
+// StreamOwnership returns the user ID that created the stream and whether the
+// stream is still tracked. Callers must compare the returned creator against
+// the requesting user before attaching to the stream — without this the
+// channel becomes a session-hijack primitive (terminal/file manager RCE).
+func (s *NezhaHandler) StreamOwnership(streamId string) (uint64, bool) {
+	s.ioStreamMutex.RLock()
+	defer s.ioStreamMutex.RUnlock()
+
+	ctx, ok := s.ioStreams[streamId]
+	if !ok {
+		return 0, false
+	}
+	return ctx.creatorUserID, true
 }
 
 func (s *NezhaHandler) GetStream(streamId string) (*ioStreamContext, error) {

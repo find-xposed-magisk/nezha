@@ -44,7 +44,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, err
 	}
 
-	rpc.NezhaHandlerSingleton.CreateStream(streamId)
+	rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c))
 
 	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,
@@ -72,6 +72,13 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 // @Router /ws/terminal/{id} [get]
 func terminalStream(c *gin.Context) (any, error) {
 	streamId := c.Param("id")
+	// GHSA-style fix: io_stream sessions must be reachable only by their creator
+	// (or an admin). Without this, any authenticated user who learns a stream
+	// UUID — via Referer leak, access logs, browser history — can hijack a live
+	// terminal and gain shell access to the target server.
+	if !rpc.NezhaHandlerSingleton.IsStreamAuthorizedForUser(streamId, getUid(c), callerIsAdmin(c)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
 	if _, err := rpc.NezhaHandlerSingleton.GetStream(streamId); err != nil {
 		return nil, err
 	}

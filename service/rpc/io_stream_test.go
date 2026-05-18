@@ -12,7 +12,7 @@ func TestIOStream(t *testing.T) {
 
 	const testStreamID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
-	handler.CreateStream(testStreamID)
+	handler.CreateStream(testStreamID, 0)
 	userIo, agentIo := newPipeReadWriter(), newPipeReadWriter()
 	defer func() {
 		userIo.Close()
@@ -104,4 +104,72 @@ func newPipeReadWriter() io.ReadWriteCloser {
 		io.Reader
 		io.WriteCloser
 	}{r, w}
+}
+
+func TestStreamOwnershipReturnsCreatorUserID(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("alice-stream", 100)
+
+	creator, found := h.StreamOwnership("alice-stream")
+	if !found {
+		t.Fatalf("expected stream to be found after CreateStream")
+	}
+	if creator != 100 {
+		t.Fatalf("expected creator user ID 100, got %d", creator)
+	}
+}
+
+func TestStreamOwnershipReturnsNotFoundForUnknownID(t *testing.T) {
+	h := NewNezhaHandler()
+	if _, found := h.StreamOwnership("nonexistent"); found {
+		t.Fatalf("expected unknown stream id to report not-found")
+	}
+}
+
+func TestStreamOwnershipPreservesPerStreamCreator(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("alice-stream", 100)
+	h.CreateStream("bob-stream", 200)
+
+	aliceCreator, _ := h.StreamOwnership("alice-stream")
+	bobCreator, _ := h.StreamOwnership("bob-stream")
+	if aliceCreator != 100 || bobCreator != 200 {
+		t.Fatalf("expected per-stream creator IDs alice=100 bob=200, got alice=%d bob=%d",
+			aliceCreator, bobCreator)
+	}
+}
+
+func TestIsStreamAuthorizedForUserAllowsCreator(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("alice-stream", 100)
+
+	if !h.IsStreamAuthorizedForUser("alice-stream", 100, false) {
+		t.Fatalf("creator must be authorized to attach to their own stream")
+	}
+}
+
+func TestIsStreamAuthorizedForUserDeniesForeignMember(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("alice-stream", 100)
+
+	if h.IsStreamAuthorizedForUser("alice-stream", 200, false) {
+		t.Fatalf("foreign member must not be authorized — session hijack would be possible")
+	}
+}
+
+func TestIsStreamAuthorizedForUserAllowsAdmin(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("alice-stream", 100)
+
+	if !h.IsStreamAuthorizedForUser("alice-stream", 999, true) {
+		t.Fatalf("admin must be authorized to attach regardless of creator")
+	}
+}
+
+func TestIsStreamAuthorizedForUserDeniesUnknownStream(t *testing.T) {
+	h := NewNezhaHandler()
+
+	if h.IsStreamAuthorizedForUser("nonexistent", 100, true) {
+		t.Fatalf("unknown stream id must not authorize even admin")
+	}
 }
