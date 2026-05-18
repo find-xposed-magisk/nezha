@@ -173,3 +173,50 @@ func TestIsStreamAuthorizedForUserDeniesUnknownStream(t *testing.T) {
 		t.Fatalf("unknown stream id must not authorize even admin")
 	}
 }
+
+// IOStream init messages begin with the magic marker ff05ff05. The inline
+// check previously used && between byte inequalities, which due to short-
+// circuit evaluation accepted almost every non-magic payload (any payload
+// whose byte0 == 0xff was silently let through). These tests pin down the
+// correct semantics: all four bytes must match exactly.
+func TestIsValidIOStreamMagicAcceptsExactMagic(t *testing.T) {
+	if !isValidIOStreamMagic([]byte{0xff, 0x05, 0xff, 0x05}) {
+		t.Fatal("exact ff05ff05 magic must be accepted")
+	}
+	if !isValidIOStreamMagic([]byte{0xff, 0x05, 0xff, 0x05, 'p', 'a', 'y', 'l', 'o', 'a', 'd'}) {
+		t.Fatal("ff05ff05 followed by payload must be accepted")
+	}
+}
+
+func TestIsValidIOStreamMagicRejectsShortData(t *testing.T) {
+	if isValidIOStreamMagic([]byte{}) {
+		t.Fatal("empty data must be rejected")
+	}
+	if isValidIOStreamMagic([]byte{0xff, 0x05, 0xff}) {
+		t.Fatal("3-byte payload must be rejected")
+	}
+}
+
+func TestIsValidIOStreamMagicRejectsPartialOrWrongMagic(t *testing.T) {
+	// Each case has at least one byte that does NOT match the magic. The
+	// previous && short-circuit bug let cases like {0xff, 0, 0, 0} pass
+	// because byte0 alone matched. Correct semantics: any single byte off
+	// → reject.
+	cases := [][]byte{
+		{0x00, 0x00, 0x00, 0x00},
+		{0xff, 0x00, 0x00, 0x00},
+		{0x00, 0x05, 0x00, 0x00},
+		{0x00, 0x00, 0xff, 0x00},
+		{0x00, 0x00, 0x00, 0x05},
+		{0xff, 0x05, 0xff, 0x00},
+		{0xff, 0x05, 0x00, 0x05},
+		{0xff, 0x00, 0xff, 0x05},
+		{0x00, 0x05, 0xff, 0x05},
+		{0xff, 0xff, 0xff, 0xff},
+	}
+	for _, c := range cases {
+		if isValidIOStreamMagic(c) {
+			t.Fatalf("non-magic payload %v must be rejected (regression: && short-circuit bug)", c)
+		}
+	}
+}

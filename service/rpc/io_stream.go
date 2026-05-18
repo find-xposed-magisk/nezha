@@ -58,6 +58,20 @@ func (s *NezhaHandler) IsStreamAuthorizedForUser(streamId string, userID uint64,
 	return creator == userID
 }
 
+// isValidIOStreamMagic reports whether the first four bytes of an IOStream
+// init message carry the ff05ff05 marker. Previously this was inlined as
+// `byte0 != 0xff && byte1 != 0x05 && byte2 != 0xff && byte3 == 0x05` to
+// detect *invalid* payloads — but && short-circuited so any payload whose
+// byte0 happened to be 0xff slipped through. Centralising the check here and
+// stating the contract positively (all four bytes must match) eliminates the
+// short-circuit class of mistakes.
+func isValidIOStreamMagic(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	return data[0] == 0xff && data[1] == 0x05 && data[2] == 0xff && data[3] == 0x05
+}
+
 // StreamOwnership returns the user ID that created the stream and whether the
 // stream is still tracked. Callers must compare the returned creator against
 // the requesting user before attaching to the stream — without this the
