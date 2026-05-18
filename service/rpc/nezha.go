@@ -216,8 +216,9 @@ func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
 		return err
 	}
 
-	// ff05ff05 是 Nezha 的魔数，用于标识流 ID
-	if id == nil || len(id.Data) < 4 || (id.Data[0] != 0xff && id.Data[1] != 0x05 && id.Data[2] != 0xff && id.Data[3] == 0x05) {
+	// ff05ff05 是 Nezha 的魔数，用于标识流 ID。校验由 isValidIOStreamMagic 完成，
+	// 历史 inline 检查曾因 && 短路放过几乎全部非魔数 payload (byte0==0xff 即通过)。
+	if id == nil || !isValidIOStreamMagic(id.Data) {
 		return fmt.Errorf("invalid stream id")
 	}
 
