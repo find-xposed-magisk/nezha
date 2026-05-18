@@ -46,7 +46,7 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 		return nil, err
 	}
 
-	rpc.NezhaHandlerSingleton.CreateStream(streamId)
+	rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c))
 
 	fmData, _ := json.Marshal(&model.TaskFM{
 		StreamID: streamId,
@@ -72,6 +72,12 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 // @Router /ws/file/{id} [get]
 func fmStream(c *gin.Context) (any, error) {
 	streamId := c.Param("id")
+	// GHSA-style fix: io_stream sessions must be reachable only by their creator
+	// (or an admin). Without this, any authenticated user who learns a stream
+	// UUID can hijack a live file-manager session on the target server.
+	if !rpc.NezhaHandlerSingleton.IsStreamAuthorizedForUser(streamId, getUid(c), callerIsAdmin(c)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
 	if _, err := rpc.NezhaHandlerSingleton.GetStream(streamId); err != nil {
 		return nil, err
 	}
