@@ -178,10 +178,16 @@ func forceUpdateServer(c *gin.Context) (*model.ServerTaskResponse, error) {
 
 	for _, sid := range forceUpdateServers {
 		server, _ := singleton.ServerShared.Get(sid)
-		if server != nil && server.TaskStream != nil {
-			if !server.HasPermission(c) {
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
+		// Per-ID ownership check. Foreign servers (online or offline) and
+		// unknown IDs MUST be indistinguishable in the response — otherwise the
+		// response shape leaks server-ID existence/online-state, letting a
+		// RoleMember enumerate other users' machines. We drop them into the
+		// Offline bucket without actually dispatching the upgrade task.
+		if server == nil || !server.HasPermission(c) {
+			forceUpdateResp.Offline = append(forceUpdateResp.Offline, sid)
+			continue
+		}
+		if server.TaskStream != nil {
 			if err := server.TaskStream.Send(&pb.Task{
 				Type: model.TaskTypeUpgrade,
 			}); err != nil {
