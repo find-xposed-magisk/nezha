@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	petname "github.com/dustinkirkland/golang-petname"
@@ -56,7 +57,10 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 		return 0, status.Error(codes.Unauthenticated, "客户端 UUID 不合法")
 	}
 
-	clientID, hasID := singleton.ServerShared.UUIDToID(clientUUID)
+	clientID, hasID, err := authorizeAgentForUUID(userId, clientUUID)
+	if err != nil {
+		return 0, status.Error(codes.Unauthenticated, err.Error())
+	}
 	if !hasID {
 		s := model.Server{UUID: clientUUID, Name: petname.Generate(2, "-"), Common: model.Common{
 			UserID: userId,
@@ -72,4 +76,33 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 	}
 
 	return clientID, nil
+}
+
+// authorizeAgentForUUID resolves a client UUID to the dashboard's internal
+// server ID, ensuring the resolved server is actually owned by the agent
+// secret's owner. Previously Check returned the resolved server ID without
+// verifying ownership, allowing an agent that knew another user's server
+// UUID to impersonate it (poisoning monitoring state, triggering alerts).
+// hasID=false means the UUID is unknown and the caller may register it as
+// a new server for the secret owner.
+//
+// The error path also doubles as a leak-detection signal for operators: if
+// an agent persistently fails with "client UUID does not belong to the
+// agent secret owner", it pins down which user's secret has been reused
+// against a server they don't own.
+func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, hasID bool, err error) {
+	cid, found := singleton.ServerShared.UUIDToID(clientUUID)
+	if !found {
+		return 0, false, nil
+	}
+	server, _ := singleton.ServerShared.Get(cid)
+	if server == nil {
+		// Cache inconsistency: UUID maps to an ID, but no server record exists.
+		// Treat as unknown (registration path) rather than impersonation.
+		return 0, false, nil
+	}
+	if server.UserID != userId {
+		return 0, false, fmt.Errorf("client UUID does not belong to the agent secret owner")
+	}
+	return cid, true, nil
 }
