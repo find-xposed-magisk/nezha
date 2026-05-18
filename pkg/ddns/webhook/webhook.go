@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -57,13 +58,19 @@ func (provider *Provider) SetRecords(ctx context.Context, zone string,
 			provider.ipAddr = rr.Data
 			provider.domain = fmt.Sprintf("%s.%s", rr.Name, strings.TrimSuffix(zone, "."))
 
-			req, err := provider.prepareRequest(ctx)
+			// WebhookURL is attacker-controlled (GHSA-6x26-5727-rrm9); the request and
+			// the client are paired so URL validation and DialContext pinning are driven
+			// by a single DNS resolution. Do not swap the client for utils.HttpClient.
+			req, client, err := provider.prepareRequest(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
 			}
-			if _, err := utils.HttpClient.Do(req); err != nil {
+			resp, err := client.Do(req)
+			if err != nil {
 				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
 			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
 		default:
 			return nil, fmt.Errorf("unsupported record type: %T", rec)
 		}
@@ -72,26 +79,32 @@ func (provider *Provider) SetRecords(ctx context.Context, zone string,
 	return recs, nil
 }
 
-func (provider *Provider) prepareRequest(ctx context.Context) (*http.Request, error) {
+func (provider *Provider) prepareRequest(ctx context.Context) (*http.Request, *http.Client, error) {
 	u, err := provider.reqUrl()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	// Single SSRF check + dial pin; the returned client must be used by callers
+	// so the dialer's pinned IP and the validated URL stay in sync.
+	client, err := utils.NewRestrictedHTTPClient(u.String(), false)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	body, err := provider.reqBody()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	headers, err := utils.GjsonIter(
 		provider.formatWebhookString(provider.DDNSProfile.WebhookHeaders))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, requestTypes[provider.DDNSProfile.WebhookMethod], u.String(), strings.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	provider.setContentType(req)
@@ -100,7 +113,7 @@ func (provider *Provider) prepareRequest(ctx context.Context) (*http.Request, er
 		req.Header.Set(k, v)
 	}
 
-	return req, nil
+	return req, client, nil
 }
 
 func (provider *Provider) setContentType(req *http.Request) {

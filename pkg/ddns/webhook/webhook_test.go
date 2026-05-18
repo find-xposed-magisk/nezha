@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/nezhahq/nezha/model"
@@ -44,7 +45,7 @@ func execCase(t *testing.T, item testSt) {
 		t.Fatalf("Expected %s, but got %s", item.expectBody, reqBody)
 	}
 
-	req, err := pw.prepareRequest(context.Background())
+	req, _, err := pw.prepareRequest(context.Background())
 	if err != nil {
 		t.Fatalf("Error: %s", err)
 	}
@@ -69,11 +70,11 @@ func TestWebhookRequest(t *testing.T) {
 				Domains:        []string{"www.example.com"},
 				MaxRetries:     1,
 				EnableIPv4:     &ipv4,
-				WebhookURL:     "http://ddns.example.com/?ip=#ip#",
+				WebhookURL:     "http://1.1.1.1/?ip=#ip#",
 				WebhookMethod:  methodGET,
 				WebhookHeaders: `{"ip":"#ip#","record":"#record#"}`,
 			},
-			expectURL:         "http://ddns.example.com/?ip=1.1.1.1",
+			expectURL:         "http://1.1.1.1/?ip=1.1.1.1",
 			expectContentType: "",
 			expectHeader: map[string]string{
 				"ip":     "1.1.1.1",
@@ -85,12 +86,12 @@ func TestWebhookRequest(t *testing.T) {
 				Domains:            []string{"www.example.com"},
 				MaxRetries:         1,
 				EnableIPv4:         &ipv4,
-				WebhookURL:         "http://ddns.example.com/api",
+				WebhookURL:         "http://1.1.1.1/api",
 				WebhookMethod:      methodPOST,
 				WebhookRequestType: requestTypeJSON,
 				WebhookRequestBody: `{"ip":"#ip#","record":"#record#"}`,
 			},
-			expectURL:         "http://ddns.example.com/api",
+			expectURL:         "http://1.1.1.1/api",
 			expectContentType: reqTypeJSON,
 			expectBody:        `{"ip":"1.1.1.1","record":"A"}`,
 		},
@@ -99,12 +100,12 @@ func TestWebhookRequest(t *testing.T) {
 				Domains:            []string{"www.example.com"},
 				MaxRetries:         1,
 				EnableIPv4:         &ipv4,
-				WebhookURL:         "http://ddns.example.com/api",
+				WebhookURL:         "http://1.1.1.1/api",
 				WebhookMethod:      methodPOST,
 				WebhookRequestType: requestTypeForm,
 				WebhookRequestBody: `{"ip":"#ip#","record":"#record#"}`,
 			},
-			expectURL:         "http://ddns.example.com/api",
+			expectURL:         "http://1.1.1.1/api",
 			expectContentType: reqTypeForm,
 			expectBody:        "ip=1.1.1.1&record=A",
 		},
@@ -112,5 +113,60 @@ func TestWebhookRequest(t *testing.T) {
 
 	for _, c := range cases {
 		execCase(t, c)
+	}
+}
+
+func TestWebhookTargetRejectsBlockedRanges(t *testing.T) {
+	cases := []string{
+		"http://0.0.0.0/",
+		"http://10.1.2.3/",
+		"http://100.64.0.1/",
+		"http://127.0.0.1/",
+		"http://127.255.255.254/",
+		"http://169.254.169.254/",
+		"http://172.16.0.1/",
+		"http://192.0.0.1/",
+		"http://192.0.2.1/",
+		"http://192.168.1.1/",
+		"http://198.18.0.1/",
+		"http://198.51.100.1/",
+		"http://203.0.113.1/",
+		"http://224.0.0.1/",
+		"http://240.0.0.1/",
+		"http://[::]/",
+		"http://[::1]/",
+		"http://[::ffff:127.0.0.1]/",
+		"http://[64:ff9b::1]/",
+		"http://[100::1]/",
+		"http://[2001:db8::1]/",
+		"http://[fc00::1]/",
+		"http://[fe80::1]/",
+		"http://[ff00::1]/",
+		"ftp://example.com/",
+		"file:///etc/passwd",
+		"http:///path",
+	}
+
+	for _, rawURL := range cases {
+		t.Run(rawURL, func(t *testing.T) {
+			provider := Provider{DDNSProfile: &model.DDNSProfile{
+				Domains:        []string{"www.example.com"},
+				WebhookURL:     rawURL,
+				WebhookMethod:  methodGET,
+				WebhookHeaders: `{}`,
+			}}
+			provider.ipAddr = "1.1.1.1"
+			provider.domain = provider.DDNSProfile.Domains[0]
+			provider.ipType = "ipv4"
+			provider.recordType = "A"
+
+			_, _, err := provider.prepareRequest(context.Background())
+			if err == nil {
+				t.Fatalf("expected %s to be rejected", rawURL)
+			}
+			if !strings.Contains(err.Error(), "not allowed") {
+				t.Fatalf("expected not allowed error, got %q", err.Error())
+			}
+		})
 	}
 }
