@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nezhahq/nezha/model"
@@ -250,6 +251,88 @@ func TestListHandlerFiltersByOwnership(t *testing.T) {
 		ids := decodeIDs[uint64](t, w.Body.Bytes())
 		assert.ElementsMatch(t, []uint64{1, 2, 3}, ids)
 	})
+}
+
+func TestShowServiceFiltersCycleTransferStatsLikeServerList(t *testing.T) {
+	newMemberValidationContext(t)
+	assert.NoError(t, singleton.DB.AutoMigrate(&model.Service{}, &model.ServiceHistory{}))
+	assert.NoError(t, singleton.DB.Create(&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "public server", UUID: "public-server"}).Error)
+	assert.NoError(t, singleton.DB.Create(&model.Server{Common: model.Common{ID: 2, UserID: 1}, Name: "hidden admin server", UUID: "hidden-admin-server", HideForGuest: true}).Error)
+	assert.NoError(t, singleton.DB.Create(&model.Server{Common: model.Common{ID: 3, UserID: 200}, Name: "hidden member server", UUID: "hidden-member-server", HideForGuest: true}).Error)
+	singleton.ServerShared = singleton.NewServerClass()
+
+	assert.NoError(t, singleton.DB.Create(&model.Service{Common: model.Common{ID: 10, UserID: 1}, Name: "shown service", EnableShowInService: true}).Error)
+	assert.NoError(t, singleton.DB.Create(&model.Service{Common: model.Common{ID: 11, UserID: 1}, Name: "hidden service"}).Error)
+
+	originalServiceSentinel := singleton.ServiceSentinelShared
+	serviceSentinel, err := singleton.NewServiceSentinel(make(chan *model.Service, 2))
+	assert.NoError(t, err)
+	singleton.ServiceSentinelShared = serviceSentinel
+	t.Cleanup(func() { singleton.ServiceSentinelShared = originalServiceSentinel })
+
+	singleton.AlertsLock.Lock()
+	originalCycleTransferStats := singleton.AlertsCycleTransferStatsStore
+	singleton.AlertsCycleTransferStatsStore = map[uint64]*model.CycleTransferStats{
+		7: {
+			Name:       "transfer alert",
+			ServerName: map[uint64]string{1: "public server", 2: "hidden admin server", 3: "hidden member server"},
+			Transfer:   map[uint64]uint64{1: 100, 2: 200, 3: 300},
+			NextUpdate: map[uint64]time.Time{1: time.Unix(1, 0), 2: time.Unix(2, 0), 3: time.Unix(3, 0)},
+		},
+	}
+	singleton.AlertsLock.Unlock()
+	t.Cleanup(func() {
+		singleton.AlertsLock.Lock()
+		singleton.AlertsCycleTransferStatsStore = originalCycleTransferStats
+		singleton.AlertsLock.Unlock()
+	})
+
+	tests := []struct {
+		name      string
+		viewer    *model.User
+		wantNames map[uint64]string
+	}{
+		{
+			name:      "guest sees public servers only",
+			wantNames: map[uint64]string{1: "public server"},
+		},
+		{
+			name:      "member sees public and owned hidden servers",
+			viewer:    &model.User{Common: model.Common{ID: 200}, Role: model.RoleMember},
+			wantNames: map[uint64]string{1: "public server", 3: "hidden member server"},
+		},
+		{
+			name:      "admin sees every server",
+			viewer:    &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin},
+			wantNames: map[uint64]string{1: "public server", 2: "hidden admin server", 3: "hidden member server"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			if tc.viewer != nil {
+				ctx.Set(model.CtxKeyAuthorizedUser, tc.viewer)
+			}
+
+			got, err := showService(ctx)
+			assert.NoError(t, err)
+			assert.Contains(t, got.Services, uint64(10))
+			assert.NotContains(t, got.Services, uint64(11))
+			if assert.Contains(t, got.CycleTransferStats, uint64(7)) {
+				cycleStats := got.CycleTransferStats[7]
+				assert.Equal(t, tc.wantNames, cycleStats.ServerName)
+				assert.Len(t, cycleStats.Transfer, len(tc.wantNames))
+				assert.Len(t, cycleStats.NextUpdate, len(tc.wantNames))
+				for serverID := range cycleStats.Transfer {
+					assert.Contains(t, tc.wantNames, serverID)
+				}
+				for serverID := range cycleStats.NextUpdate {
+					assert.Contains(t, tc.wantNames, serverID)
+				}
+			}
+		})
+	}
 }
 
 func decodeIDs[T ~uint64](t *testing.T, body []byte) []T {

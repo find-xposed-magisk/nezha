@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -26,14 +27,14 @@ import (
 // @Success 200 {object} model.CommonResponse[model.ServiceResponse]
 // @Router /service [get]
 func showService(c *gin.Context) (*model.ServiceResponse, error) {
-	res, err, _ := requestGroup.Do("list-service", func() (any, error) {
+	res, err, _ := requestGroup.Do(serviceResponseCacheKey(c), func() (any, error) {
 		singleton.AlertsLock.RLock()
 		defer singleton.AlertsLock.RUnlock()
 		stats := singleton.ServiceSentinelShared.CopyStats()
 		var cycleTransferStats map[uint64]model.CycleTransferStats
 		copier.Copy(&cycleTransferStats, singleton.AlertsCycleTransferStatsStore)
 		return []any{
-			stats, cycleTransferStats,
+			stats, filterCycleTransferStatsForViewer(c, cycleTransferStats),
 		}, nil
 	})
 	if err != nil {
@@ -44,6 +45,51 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 		Services:           res.([]any)[0].(map[uint64]model.ServiceResponseItem),
 		CycleTransferStats: res.([]any)[1].(map[uint64]model.CycleTransferStats),
 	}, nil
+}
+
+func serviceResponseCacheKey(c *gin.Context) string {
+	auth, ok := c.Get(model.CtxKeyAuthorizedUser)
+	if !ok {
+		return "list-service::guest"
+	}
+	user, ok := auth.(*model.User)
+	if !ok || user == nil {
+		return "list-service::guest"
+	}
+	return fmt.Sprintf("list-service::%t::%d", user.Role.IsAdmin(), user.ID)
+}
+
+func filterCycleTransferStatsForViewer(c *gin.Context, stats map[uint64]model.CycleTransferStats) map[uint64]model.CycleTransferStats {
+	if len(stats) == 0 {
+		return stats
+	}
+	servers := singleton.ServerShared.GetList()
+	filteredStats := make(map[uint64]model.CycleTransferStats, len(stats))
+	for id, cycleStats := range stats {
+		cycleStats.ServerName = filterServerMapForViewer(c, cycleStats.ServerName, servers)
+		cycleStats.Transfer = filterServerMapForViewer(c, cycleStats.Transfer, servers)
+		cycleStats.NextUpdate = filterServerMapForViewer(c, cycleStats.NextUpdate, servers)
+		if len(cycleStats.ServerName) == 0 && len(cycleStats.Transfer) == 0 && len(cycleStats.NextUpdate) == 0 {
+			continue
+		}
+		filteredStats[id] = cycleStats
+	}
+	return filteredStats
+}
+
+func filterServerMapForViewer[T any](c *gin.Context, values map[uint64]T, servers map[uint64]*model.Server) map[uint64]T {
+	if len(values) == 0 {
+		return values
+	}
+	filteredValues := make(map[uint64]T, len(values))
+	for serverID, value := range values {
+		server, ok := servers[serverID]
+		if !ok || !userCanViewServer(c, server) {
+			continue
+		}
+		filteredValues[serverID] = value
+	}
+	return filteredValues
 }
 
 // List service
