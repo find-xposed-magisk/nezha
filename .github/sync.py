@@ -60,7 +60,7 @@ def get_github_latest_release():
         print("No releases found.")
 
 
-def delete_gitee_releases(latest_id, client, uri, token):
+def delete_gitee_releases(keep_id, keep_tag, client, uri, token):
     get_data = {
         'access_token': token
     }
@@ -70,28 +70,29 @@ def delete_gitee_releases(latest_id, client, uri, token):
     if release_response.status_code == 200:
         release_info = release_response.json()
     else:
-        print(
-            f"Request failed with status code {release_response.status_code}")
+        raise ValueError(
+            f"List releases failed with status code {release_response.status_code}")
 
     release_ids = []
     for block in release_info:
-        if 'id' in block:
-            release_ids.append(block['id'])
+        release_id = block.get('id')
+        release_tag = block.get('tag_name')
+        if release_id == keep_id or release_tag == keep_tag:
+            print(f'Keep current release {release_tag} #{release_id}.')
+            continue
+        if release_id is not None:
+            release_ids.append((release_id, release_tag))
 
-    print(f'Current release ids: {release_ids}')
-    if latest_id in release_ids:
-        release_ids.remove(latest_id)
-    else:
-        print(f'Release #{latest_id} is not in the release list, skip deleting older releases.')
+    print(f'Older release ids: {[release_id for release_id, _ in release_ids]}')
 
-    for id in release_ids:
-        release_uri = f"{uri}/{id}"
+    for release_id, release_tag in release_ids:
+        release_uri = f"{uri}/{release_id}"
         delete_data = {
             'access_token': token
         }
         delete_response = request_with_retries(client, 'DELETE', release_uri, params=delete_data)
         if delete_response.status_code == 204:
-            print(f'Successfully deleted release #{id}.')
+            print(f'Successfully deleted older release {release_tag} #{release_id}.')
         else:
             raise ValueError(
                 f"Request failed with status code {delete_response.status_code}")
@@ -129,6 +130,11 @@ def sync_to_gitee(tag: str, body: str, files: slice):
     release_id = release_info.get('id')
 
     print(f"Gitee release id: {release_id}")
+
+    # Free Gitee release storage before dashboard asset uploads. Gitee can time out
+    # while accepting large ZIPs if older release assets still consume the quota.
+    delete_gitee_releases(release_id, tag, api_client, release_api_uri, access_token)
+
     asset_api_uri = f"{release_api_uri}/{release_id}/attach_files"
     uploaded_assets = get_gitee_asset_names(release_info)
 
@@ -140,12 +146,6 @@ def sync_to_gitee(tag: str, body: str, files: slice):
 
         upload_gitee_asset(api_client, asset_api_uri, release_api_uri, access_token, tag, file_path)
         uploaded_assets.add(asset_name)
-
-    # 仅保留最新 Release 以防超出 Gitee 仓库配额
-    try:
-        delete_gitee_releases(release_id, api_client, release_api_uri, access_token)
-    except ValueError as e:
-        print(e)
 
     api_client.close()
     print("Sync is completed!")
