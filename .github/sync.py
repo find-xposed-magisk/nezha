@@ -5,7 +5,10 @@ from github import Github
 
 MAX_RETRIES = 5
 REQUEST_TIMEOUT = 120
-UPLOAD_TIMEOUT = 300
+# Gitee can need more than five minutes to write a 30 MB dashboard ZIP.
+# Keep per-file retries low and let the workflow timeout bound worst-case hangs.
+UPLOAD_TIMEOUT = 1800
+UPLOAD_MAX_RETRIES = 2
 
 
 def request_with_retries(client, method, url, retry_statuses=(429, 500, 502, 503, 504), **kwargs):
@@ -174,7 +177,7 @@ def get_gitee_asset_names(release_info):
 def upload_gitee_asset(client, asset_api_uri, release_api_uri, token, tag, file_path):
     asset_name = os.path.basename(file_path)
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         try:
             with open(file_path, 'rb') as asset_file:
                 response = client.post(
@@ -196,10 +199,10 @@ def upload_gitee_asset(client, asset_api_uri, release_api_uri, token, tag, file_
             print(f"{asset_name} exists on Gitee after a failed upload attempt, continue.")
             return
 
-        if attempt < MAX_RETRIES:
+        if attempt < UPLOAD_MAX_RETRIES:
             time.sleep(min(60, attempt * 10))
 
-    raise ValueError(f"Failed to upload {asset_name} after {MAX_RETRIES} attempts")
+    raise ValueError(f"Failed to upload {asset_name} after {UPLOAD_MAX_RETRIES} attempts")
 
 
 get_github_latest_release()
