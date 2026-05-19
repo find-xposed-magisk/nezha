@@ -101,6 +101,11 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 		// Treat as unknown (registration path) rather than impersonation.
 		return 0, false, nil
 	}
+	if userId == 0 {
+		// The legacy global agent secret maps to user 0. It predates per-user
+		// agent secrets, so keep it compatible by allowing any existing UUID.
+		return cid, true, nil
+	}
 	if server.UserID != userId {
 		return 0, false, fmt.Errorf("client UUID does not belong to the agent secret owner")
 	}
