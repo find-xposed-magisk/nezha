@@ -1,8 +1,34 @@
 import os
 import time
 import requests
-import hashlib
 from github import Github
+
+MAX_RETRIES = 5
+REQUEST_TIMEOUT = 120
+UPLOAD_TIMEOUT = 300
+
+
+def request_with_retries(client, method, url, retry_statuses=(429, 500, 502, 503, 504), **kwargs):
+    kwargs.setdefault('timeout', REQUEST_TIMEOUT)
+    response = None
+    last_error = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = client.request(method, url, **kwargs)
+            if response.status_code not in retry_statuses:
+                return response
+            print(f"{method} {url} returned {response.status_code}, retrying... (attempt {attempt})")
+        except requests.exceptions.RequestException as err:
+            last_error = err
+            print(f"{method} {url} failed: {err}, retrying... (attempt {attempt})")
+
+        if attempt < MAX_RETRIES:
+            time.sleep(min(60, attempt * 10))
+
+    if last_error is not None:
+        raise last_error
+    return response
 
 
 def get_github_latest_release():
@@ -17,7 +43,7 @@ def get_github_latest_release():
             url = asset.browser_download_url
             name = asset.name
 
-            response = requests.get(url)
+            response = requests.get(url, timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 with open(name, 'wb') as f:
                     f.write(response.content)
@@ -37,7 +63,7 @@ def delete_gitee_releases(latest_id, client, uri, token):
     }
 
     release_info = []
-    release_response = client.get(uri, json=get_data)
+    release_response = request_with_retries(client, 'GET', uri, params=get_data)
     if release_response.status_code == 200:
         release_info = release_response.json()
     else:
@@ -50,14 +76,17 @@ def delete_gitee_releases(latest_id, client, uri, token):
             release_ids.append(block['id'])
 
     print(f'Current release ids: {release_ids}')
-    release_ids.remove(latest_id)
+    if latest_id in release_ids:
+        release_ids.remove(latest_id)
+    else:
+        print(f'Release #{latest_id} is not in the release list, skip deleting older releases.')
 
     for id in release_ids:
         release_uri = f"{uri}/{id}"
         delete_data = {
             'access_token': token
         }
-        delete_response = client.delete(release_uri, json=delete_data)
+        delete_response = request_with_retries(client, 'DELETE', release_uri, params=delete_data)
         if delete_response.status_code == 204:
             print(f'Successfully deleted release #{id}.')
         else:
@@ -66,14 +95,12 @@ def delete_gitee_releases(latest_id, client, uri, token):
 
 
 def sync_to_gitee(tag: str, body: str, files: slice):
-    release_id = ""
     owner = "naibahq"
     repo = "nezha"
     release_api_uri = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
     api_client = requests.Session()
     api_client.headers.update({
         'Accept': 'application/json',
-        'Content-Type': 'application/json'
     })
 
     access_token = os.environ['GITEE_TOKEN']
@@ -85,36 +112,31 @@ def sync_to_gitee(tag: str, body: str, files: slice):
         'prerelease': False,
         'target_commitish': 'master'
     }
-    release_api_response = api_client.post(release_api_uri, json=release_data)
-    if release_api_response.status_code == 201:
-        release_info = release_api_response.json()
-        release_id = release_info.get('id')
-    else:
-        print(
-            f"Request failed with status code {release_api_response.status_code}")
+    release_info = get_existing_gitee_release(api_client, release_api_uri, tag, access_token)
+    if release_info is None:
+        release_api_response = request_with_retries(api_client, 'POST', release_api_uri, json=release_data)
+        if release_api_response.status_code == 201:
+            release_info = release_api_response.json()
+        else:
+            print(f"Create release failed with status code {release_api_response.status_code}: {release_api_response.text}")
+            release_info = get_existing_gitee_release(api_client, release_api_uri, tag, access_token)
+            if release_info is None:
+                raise ValueError(f"Unable to create or find Gitee release for {tag}")
+
+    release_id = release_info.get('id')
 
     print(f"Gitee release id: {release_id}")
     asset_api_uri = f"{release_api_uri}/{release_id}/attach_files"
+    uploaded_assets = get_gitee_asset_names(release_info)
 
     for file_path in files:
-        success = False
+        asset_name = os.path.basename(file_path)
+        if asset_name in uploaded_assets:
+            print(f"{asset_name} already exists on Gitee, skip upload.")
+            continue
 
-        while not success:
-            files = {
-                'file': open(file_path, 'rb')
-            }
-
-            asset_api_response = requests.post(
-                asset_api_uri, params={'access_token': access_token}, files=files)
-
-            if asset_api_response.status_code == 201:
-                asset_info = asset_api_response.json()
-                asset_name = asset_info.get('name')
-                print(f"Successfully uploaded {asset_name}!")
-                success = True
-            else:
-                print(
-                    f"Request failed with status code {asset_api_response.status_code}")
+        upload_gitee_asset(api_client, asset_api_uri, release_api_uri, access_token, tag, file_path)
+        uploaded_assets.add(asset_name)
 
     # 仅保留最新 Release 以防超出 Gitee 仓库配额
     try:
@@ -129,6 +151,55 @@ def sync_to_gitee(tag: str, body: str, files: slice):
 def get_abs_path(path: str):
     wd = os.getcwd()
     return os.path.join(wd, path)
+
+
+def get_existing_gitee_release(client, release_api_uri, tag, token):
+    response = request_with_retries(
+        client,
+        'GET',
+        f"{release_api_uri}/tags/{tag}",
+        params={'access_token': token},
+    )
+    if response.status_code == 200:
+        return response.json()
+    if response.status_code != 404:
+        print(f"Get release by tag returned {response.status_code}: {response.text}")
+    return None
+
+
+def get_gitee_asset_names(release_info):
+    return {asset.get('name') for asset in release_info.get('assets', []) if asset.get('name')}
+
+
+def upload_gitee_asset(client, asset_api_uri, release_api_uri, token, tag, file_path):
+    asset_name = os.path.basename(file_path)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with open(file_path, 'rb') as asset_file:
+                response = client.post(
+                    asset_api_uri,
+                    params={'access_token': token},
+                    files={'file': asset_file},
+                    timeout=UPLOAD_TIMEOUT,
+                )
+            if response.status_code == 201:
+                asset_info = response.json()
+                print(f"Successfully uploaded {asset_info.get('name')}!")
+                return
+            print(f"Upload {asset_name} failed with status code {response.status_code}: {response.text}")
+        except requests.exceptions.RequestException as err:
+            print(f"Upload {asset_name} failed: {err}")
+
+        release_info = get_existing_gitee_release(client, release_api_uri, tag, token)
+        if release_info is not None and asset_name in get_gitee_asset_names(release_info):
+            print(f"{asset_name} exists on Gitee after a failed upload attempt, continue.")
+            return
+
+        if attempt < MAX_RETRIES:
+            time.sleep(min(60, attempt * 10))
+
+    raise ValueError(f"Failed to upload {asset_name} after {MAX_RETRIES} attempts")
 
 
 get_github_latest_release()
