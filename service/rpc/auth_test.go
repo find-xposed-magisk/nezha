@@ -73,6 +73,18 @@ func TestAuthorizeAgentForUUIDRejectsForeignServerUUID(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAgentForUUIDAllowsGlobalDefaultSecret(t *testing.T) {
+	defer setupAuthAgentFixture(t)()
+
+	cid, hasID, err := authorizeAgentForUUID(0, "uuid-bob")
+	if err != nil {
+		t.Fatalf("global default secret must be allowed to use existing UUIDs, got %v", err)
+	}
+	if !hasID || cid != 2 {
+		t.Fatalf("expected (cid=2, hasID=true), got (cid=%d, hasID=%v)", cid, hasID)
+	}
+}
+
 // An unknown UUID must NOT be treated as an impersonation attempt — it is
 // the normal first-time registration path and the caller (Check) creates a
 // new server bound to the secret owner.
