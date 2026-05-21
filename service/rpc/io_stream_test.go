@@ -12,7 +12,7 @@ func TestIOStream(t *testing.T) {
 
 	const testStreamID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
-	handler.CreateStream(testStreamID, 0)
+	handler.CreateStream(testStreamID, 0, 0)
 	userIo, agentIo := newPipeReadWriter(), newPipeReadWriter()
 	defer func() {
 		userIo.Close()
@@ -108,7 +108,7 @@ func newPipeReadWriter() io.ReadWriteCloser {
 
 func TestStreamOwnershipReturnsCreatorUserID(t *testing.T) {
 	h := NewNezhaHandler()
-	h.CreateStream("alice-stream", 100)
+	h.CreateStream("alice-stream", 100, 0)
 
 	creator, found := h.StreamOwnership("alice-stream")
 	if !found {
@@ -128,8 +128,8 @@ func TestStreamOwnershipReturnsNotFoundForUnknownID(t *testing.T) {
 
 func TestStreamOwnershipPreservesPerStreamCreator(t *testing.T) {
 	h := NewNezhaHandler()
-	h.CreateStream("alice-stream", 100)
-	h.CreateStream("bob-stream", 200)
+	h.CreateStream("alice-stream", 100, 0)
+	h.CreateStream("bob-stream", 200, 0)
 
 	aliceCreator, _ := h.StreamOwnership("alice-stream")
 	bobCreator, _ := h.StreamOwnership("bob-stream")
@@ -141,7 +141,7 @@ func TestStreamOwnershipPreservesPerStreamCreator(t *testing.T) {
 
 func TestIsStreamAuthorizedForUserAllowsCreator(t *testing.T) {
 	h := NewNezhaHandler()
-	h.CreateStream("alice-stream", 100)
+	h.CreateStream("alice-stream", 100, 0)
 
 	if !h.IsStreamAuthorizedForUser("alice-stream", 100, false) {
 		t.Fatalf("creator must be authorized to attach to their own stream")
@@ -150,7 +150,7 @@ func TestIsStreamAuthorizedForUserAllowsCreator(t *testing.T) {
 
 func TestIsStreamAuthorizedForUserDeniesForeignMember(t *testing.T) {
 	h := NewNezhaHandler()
-	h.CreateStream("alice-stream", 100)
+	h.CreateStream("alice-stream", 100, 0)
 
 	if h.IsStreamAuthorizedForUser("alice-stream", 200, false) {
 		t.Fatalf("foreign member must not be authorized — session hijack would be possible")
@@ -159,7 +159,7 @@ func TestIsStreamAuthorizedForUserDeniesForeignMember(t *testing.T) {
 
 func TestIsStreamAuthorizedForUserAllowsAdmin(t *testing.T) {
 	h := NewNezhaHandler()
-	h.CreateStream("alice-stream", 100)
+	h.CreateStream("alice-stream", 100, 0)
 
 	if !h.IsStreamAuthorizedForUser("alice-stream", 999, true) {
 		t.Fatalf("admin must be authorized to attach regardless of creator")
@@ -194,6 +194,52 @@ func TestIsValidIOStreamMagicRejectsShortData(t *testing.T) {
 	}
 	if isValidIOStreamMagic([]byte{0xff, 0x05, 0xff}) {
 		t.Fatal("3-byte payload must be rejected")
+	}
+}
+
+// Agent-side stream authorization is the dual of IsStreamAuthorizedForUser:
+// only the server the dashboard selected when CreateStream was called may
+// attach via IOStream(). Without it, any authenticated agent that learns an
+// active streamId (task-stream observation, leaked logs) can race in and
+// serve a terminal/fm/NAT session originally addressed to a different
+// server — a session-hijack RCE intermediation primitive.
+func TestIsStreamAuthorizedForAgentAllowsBoundServer(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("terminal-for-server-100", 1, 100)
+
+	if !h.IsStreamAuthorizedForAgent("terminal-for-server-100", 100) {
+		t.Fatalf("the bound target server must be authorized to attach")
+	}
+}
+
+func TestIsStreamAuthorizedForAgentDeniesForeignServer(t *testing.T) {
+	h := NewNezhaHandler()
+	h.CreateStream("terminal-for-server-100", 1, 100)
+
+	if h.IsStreamAuthorizedForAgent("terminal-for-server-100", 200) {
+		t.Fatalf("a foreign agent must not be able to attach — session hijack would be possible")
+	}
+}
+
+func TestIsStreamAuthorizedForAgentDeniesUnboundStream(t *testing.T) {
+	h := NewNezhaHandler()
+	// targetServerID == 0 means the stream was created without a bound agent
+	// — no agent should be allowed to attach.
+	h.CreateStream("unbound-stream", 1, 0)
+
+	if h.IsStreamAuthorizedForAgent("unbound-stream", 100) {
+		t.Fatalf("unbound stream must not authorize any agent")
+	}
+	if h.IsStreamAuthorizedForAgent("unbound-stream", 0) {
+		t.Fatalf("unbound stream must not authorize a zero clientID either")
+	}
+}
+
+func TestIsStreamAuthorizedForAgentDeniesUnknownStreamID(t *testing.T) {
+	h := NewNezhaHandler()
+
+	if h.IsStreamAuthorizedForAgent("nonexistent", 100) {
+		t.Fatalf("unknown stream id must not authorize any agent")
 	}
 }
 

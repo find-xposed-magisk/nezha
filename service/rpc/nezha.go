@@ -57,7 +57,8 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		case model.TaskTypeCommand:
 			// 处理上报的计划任务
 			cr, _ := singleton.CronShared.Get(result.GetId())
-			if cr != nil {
+			// 任务结果 ID 来自 agent，必须确认该 cron 本应派发给当前 reporter。
+			if singleton.CanReportCronResult(cr, server) {
 				// 保存当前服务器状态信息
 				var curServer model.Server
 				copier.Copy(&curServer, server)
@@ -208,7 +209,8 @@ func (s *NezhaHandler) ReportSystemInfo2(c context.Context, r *pb.Host) (*pb.Uin
 }
 
 func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
-	if _, err := s.Auth.Check(stream.Context()); err != nil {
+	clientID, err := s.Auth.Check(stream.Context())
+	if err != nil {
 		return err
 	}
 	id, err := stream.Recv()
@@ -222,6 +224,17 @@ func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
 		return fmt.Errorf("invalid stream id")
 	}
 
+	streamId := string(id.Data[4:])
+
+	// agent 侧归属校验：只有 createTerminal / createFM / ServeNAT 选定的目标 server
+	// 才能接管该 stream。漏掉这一步等同于把 terminal / fm / NAT 会话向所有合法 agent
+	// 开放（任何获得 streamId 的 agent 都能抢答），构成 session-hijack RCE 中介。
+	// 这是 commit 6661d6a（user 侧归属校验）的对偶补丁。先校验后启 keepalive，
+	// 避免未授权 agent 触发悬空 goroutine 持续向其发心跳。
+	if !s.IsStreamAuthorizedForAgent(streamId, clientID) {
+		return fmt.Errorf("stream not authorized for agent")
+	}
+
 	go func() {
 		for {
 			if err := stream.Send(&pb.IOStreamData{Data: []byte{}}); err != nil {
@@ -231,8 +244,6 @@ func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
 			time.Sleep(time.Second * 30)
 		}
 	}()
-
-	streamId := string(id.Data[4:])
 
 	if _, err := s.GetStream(streamId); err != nil {
 		return err

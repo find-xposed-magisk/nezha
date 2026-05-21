@@ -50,7 +50,7 @@ func TestTerminalStreamRejectsForeignMember(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ensureLocalizerForStreamTests(t)
 	rpc.NezhaHandlerSingleton = rpc.NewNezhaHandler()
-	rpc.NezhaHandlerSingleton.CreateStream("alice-terminal", 100)
+	rpc.NezhaHandlerSingleton.CreateStream("alice-terminal", 100, 1)
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -76,7 +76,7 @@ func TestFMStreamRejectsForeignMember(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ensureLocalizerForStreamTests(t)
 	rpc.NezhaHandlerSingleton = rpc.NewNezhaHandler()
-	rpc.NezhaHandlerSingleton.CreateStream("alice-fm", 100)
+	rpc.NezhaHandlerSingleton.CreateStream("alice-fm", 100, 1)
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -160,4 +160,3 @@ func TestWriteOauth2StateCookieIsHttpOnly(t *testing.T) {
 		t.Fatalf("nz-o2s must be HttpOnly to prevent XSS reading OAuth state, got %q", header)
 	}
 }
-
