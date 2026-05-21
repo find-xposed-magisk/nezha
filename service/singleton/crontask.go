@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jinzhu/copier"
 
@@ -15,9 +17,13 @@ import (
 	pb "github.com/nezhahq/nezha/proto"
 )
 
+const alertTriggerCronResultAuthorizationTTL = 24 * time.Hour
+
 type CronClass struct {
 	class[uint64, *model.Cron]
 	*cron.Cron
+	pendingAlertTriggerTasksMu sync.Mutex
+	pendingAlertTriggerTasks   map[uint64]map[uint64][]time.Time
 }
 
 func NewCronClass() *CronClass {
@@ -64,7 +70,8 @@ func NewCronClass() *CronClass {
 			list:       list,
 			sortedList: sortedList,
 		},
-		Cron: cronx,
+		Cron:                     cronx,
+		pendingAlertTriggerTasks: make(map[uint64]map[uint64][]time.Time),
 	}
 }
 
@@ -78,6 +85,7 @@ func (c *CronClass) Update(cr *model.Cron) {
 	delete(c.list, cr.ID)
 	c.list[cr.ID] = cr
 	c.listMu.Unlock()
+	c.deleteAlertTriggerCronResultAuthorizations([]uint64{cr.ID})
 
 	c.sortList()
 }
@@ -92,6 +100,7 @@ func (c *CronClass) Delete(idList []uint64) {
 		delete(c.list, id)
 	}
 	c.listMu.Unlock()
+	c.deleteAlertTriggerCronResultAuthorizations(idList)
 
 	c.sortList()
 }
@@ -130,6 +139,113 @@ func cronCanBeTriggeredByOwner(cr *model.Cron, triggerOwner uint64) bool {
 	return cr.UserID == triggerOwner || userIsAdmin(triggerOwner)
 }
 
+func CanReportCronResult(cr *model.Cron, reporter *model.Server) bool {
+	if cr == nil || reporter == nil || !cronCanSendToServer(cr, reporter) {
+		return false
+	}
+	if cr.Cover == model.CronCoverAll {
+		return !slices.Contains(cr.Servers, reporter.ID)
+	}
+	if cr.Cover == model.CronCoverIgnoreAll {
+		return slices.Contains(cr.Servers, reporter.ID)
+	}
+	if cr.Cover == model.CronCoverAlertTrigger {
+		return CronShared != nil && CronShared.consumeAlertTriggerCronResult(cr.ID, reporter.ID)
+	}
+	return false
+}
+
+func (c *CronClass) reserveAlertTriggerCronResult(cronID uint64, serverID uint64) {
+	c.pendingAlertTriggerTasksMu.Lock()
+	defer c.pendingAlertTriggerTasksMu.Unlock()
+
+	now := time.Now()
+	c.pruneExpiredAlertTriggerCronResultsLocked(now)
+	if c.pendingAlertTriggerTasks == nil {
+		c.pendingAlertTriggerTasks = make(map[uint64]map[uint64][]time.Time)
+	}
+	if c.pendingAlertTriggerTasks[cronID] == nil {
+		c.pendingAlertTriggerTasks[cronID] = make(map[uint64][]time.Time)
+	}
+	c.pendingAlertTriggerTasks[cronID][serverID] = append(c.pendingAlertTriggerTasks[cronID][serverID], now.Add(alertTriggerCronResultAuthorizationTTL))
+}
+
+func (c *CronClass) revokeAlertTriggerCronResult(cronID uint64, serverID uint64) {
+	c.pendingAlertTriggerTasksMu.Lock()
+	defer c.pendingAlertTriggerTasksMu.Unlock()
+
+	serverTasks := c.pendingAlertTriggerTasks[cronID]
+	expiresAtList := serverTasks[serverID]
+	if len(expiresAtList) == 0 {
+		return
+	}
+	expiresAtList = expiresAtList[:len(expiresAtList)-1]
+	if len(expiresAtList) == 0 {
+		delete(serverTasks, serverID)
+	} else {
+		serverTasks[serverID] = expiresAtList
+	}
+	if len(serverTasks) == 0 {
+		delete(c.pendingAlertTriggerTasks, cronID)
+	}
+}
+
+func (c *CronClass) consumeAlertTriggerCronResult(cronID uint64, serverID uint64) bool {
+	c.pendingAlertTriggerTasksMu.Lock()
+	defer c.pendingAlertTriggerTasksMu.Unlock()
+
+	c.pruneExpiredAlertTriggerCronResultsLocked(time.Now())
+	return c.consumeAlertTriggerCronResultLocked(cronID, serverID)
+}
+
+func (c *CronClass) consumeAlertTriggerCronResultLocked(cronID uint64, serverID uint64) bool {
+	serverTasks := c.pendingAlertTriggerTasks[cronID]
+	expiresAtList := serverTasks[serverID]
+	if len(expiresAtList) == 0 {
+		return false
+	}
+	expiresAtList = expiresAtList[1:]
+	if len(expiresAtList) == 0 {
+		delete(serverTasks, serverID)
+	} else {
+		serverTasks[serverID] = expiresAtList
+	}
+	if len(serverTasks) == 0 {
+		delete(c.pendingAlertTriggerTasks, cronID)
+	}
+	return true
+}
+
+func (c *CronClass) pruneExpiredAlertTriggerCronResultsLocked(now time.Time) {
+	for cronID, serverTasks := range c.pendingAlertTriggerTasks {
+		for serverID, expiresAtList := range serverTasks {
+			validExpiresAtList := expiresAtList[:0]
+			for _, expiresAt := range expiresAtList {
+				if expiresAt.After(now) {
+					validExpiresAtList = append(validExpiresAtList, expiresAt)
+				}
+			}
+			if len(validExpiresAtList) == 0 {
+				delete(serverTasks, serverID)
+			} else {
+				serverTasks[serverID] = validExpiresAtList
+			}
+		}
+		if len(serverTasks) == 0 {
+			delete(c.pendingAlertTriggerTasks, cronID)
+		}
+	}
+}
+
+func (c *CronClass) deleteAlertTriggerCronResultAuthorizations(cronIDs []uint64) {
+	c.pendingAlertTriggerTasksMu.Lock()
+	defer c.pendingAlertTriggerTasksMu.Unlock()
+
+	for _, cronID := range cronIDs {
+		delete(c.pendingAlertTriggerTasks, cronID)
+	}
+}
+
 func ManualTrigger(cr *model.Cron) {
 	CronTrigger(cr)()
 }
@@ -149,11 +265,17 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 					return
 				}
 				if s.TaskStream != nil {
-					s.TaskStream.Send(&pb.Task{
+					cronShared := CronShared
+					if cronShared != nil {
+						cronShared.reserveAlertTriggerCronResult(cr.ID, s.ID)
+					}
+					if err := s.TaskStream.Send(&pb.Task{
 						Id:   cr.ID,
 						Data: cr.Command,
 						Type: model.TaskTypeCommand,
-					})
+					}); err != nil && cronShared != nil {
+						cronShared.revokeAlertTriggerCronResult(cr.ID, s.ID)
+					}
 				} else {
 					// 保存当前服务器状态信息
 					curServer := model.Server{}

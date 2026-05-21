@@ -472,16 +472,37 @@ func (ss *ServiceSentinel) CheckPermission(c *gin.Context, idList iter.Seq[uint6
 	return true
 }
 
+func canReportServiceResult(service *model.Service, reporter *model.Server, taskType uint64) bool {
+	if service == nil || reporter == nil || uint64(service.Type) != taskType {
+		return false
+	}
+	switch service.Cover {
+	case model.ServiceCoverAll:
+		if service.SkipServers[reporter.ID] {
+			return false
+		}
+	case model.ServiceCoverIgnoreAll:
+		if !service.SkipServers[reporter.ID] {
+			return false
+		}
+	default:
+		return false
+	}
+
+	return service.UserID == reporter.UserID || userIsAdmin(service.UserID)
+}
+
 // worker 服务监控的实际工作流程
 func (ss *ServiceSentinel) worker() {
 	// 从服务状态汇报管道获取汇报的服务数据
 	for r := range ss.serviceReportChannel {
-		css, _ := ss.Get(r.Data.GetId())
-		if css == nil || css.ID == 0 {
+		cs, _ := ss.Get(r.Data.GetId())
+		reporter, _ := ServerShared.Get(r.Reporter)
+		// 入站结果必须匹配出站任务派发边界，避免 agent 伪造其他服务 ID 写入监控状态。
+		if !canReportServiceResult(cs, reporter, r.Data.GetType()) {
 			log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
 			continue
 		}
-		css = nil
 
 		mh := r.Data
 		if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
@@ -607,7 +628,7 @@ func (ss *ServiceSentinel) worker() {
 			ss.serviceCurrentStatusData[mh.GetId()].result = ss.serviceCurrentStatusData[mh.GetId()].result[:0]
 		}
 
-		cs, _ := ss.Get(mh.GetId())
+		cs, _ = ss.Get(mh.GetId())
 		m := ServerShared.GetList()
 		// 延迟报警
 		if mh.Delay > 0 {
