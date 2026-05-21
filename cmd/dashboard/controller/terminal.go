@@ -44,7 +44,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, err
 	}
 
-	rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c))
+	rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c), server.ID)
 
 	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,

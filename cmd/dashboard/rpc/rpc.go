@@ -140,8 +140,11 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 
 	// NAT streams are anonymous HTTP-facing tunnels; they are NOT reachable
 	// via /ws/terminal or /ws/file (which check stream ownership), so the
-	// creator user ID does not need to identify a real user.
-	rpcService.NezhaHandlerSingleton.CreateStream(streamId, 0)
+	// creator user ID does not need to identify a real user. The targetServerID
+	// IS required though — the receiving agent must prove it is the server the
+	// NAT config addressed, otherwise any agent that snoops the streamId can
+	// answer NAT traffic on behalf of an unrelated host.
+	rpcService.NezhaHandlerSingleton.CreateStream(streamId, 0, server.ID)
 	defer rpcService.NezhaHandlerSingleton.CloseStream(streamId)
 
 	taskData, err := json.Marshal(model.TaskNAT{

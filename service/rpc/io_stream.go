@@ -12,6 +12,7 @@ import (
 
 type ioStreamContext struct {
 	creatorUserID    uint64
+	targetServerID   uint64
 	userIo           io.ReadWriteCloser
 	agentIo          io.ReadWriteCloser
 	userIoConnectCh  chan struct{}
@@ -32,15 +33,35 @@ var bufPool = sync.Pool{
 	},
 }
 
-func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64) {
+func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64, targetServerID uint64) {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
 
 	s.ioStreams[streamId] = &ioStreamContext{
 		creatorUserID:    creatorUserID,
+		targetServerID:   targetServerID,
 		userIoConnectCh:  make(chan struct{}),
 		agentIoConnectCh: make(chan struct{}),
 	}
+}
+
+// IsStreamAuthorizedForAgent reports whether the connecting agent is the
+// server the dashboard selected when CreateStream was called. Without this
+// check any authenticated agent that learns an active streamId — via
+// task-stream observation, leaked logs, or a shared global agent secret —
+// can race in via IOStream() and serve a terminal / fm / NAT session that
+// was addressed to a different server, turning the channel into a
+// session-hijack RCE primitive. This is the agent-side dual of
+// IsStreamAuthorizedForUser.
+func (s *NezhaHandler) IsStreamAuthorizedForAgent(streamId string, agentServerID uint64) bool {
+	s.ioStreamMutex.RLock()
+	defer s.ioStreamMutex.RUnlock()
+
+	ctx, ok := s.ioStreams[streamId]
+	if !ok {
+		return false
+	}
+	return ctx.targetServerID != 0 && ctx.targetServerID == agentServerID
 }
 
 // IsStreamAuthorizedForUser checks whether the requesting user may attach to
