@@ -6,4 +6,4 @@ Code in `master` branch.
 
 ## Reporting a Vulnerability
 
-Thank you for your contribution to open source security, please email hi@nai.ba with details of the vulnerability.
+Thank you for your contribution to open source security, please submit on https://github.com/nezhahq/nezha/security
