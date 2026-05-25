@@ -306,11 +306,12 @@ func NewServerTransferClass() *ServerTransferClass {
 	}
 
 	type credCandidate struct {
-		serverID uint64
-		secret   string
-		ackedAt  time.Time
-		isRevert bool
-		toUserID uint64
+		serverID   uint64
+		transferID uint64
+		secret     string
+		ackedAt    time.Time
+		isRevert   bool
+		toUserID   uint64
 	}
 	candidates := make([]credCandidate, 0, len(verified)+len(rollbackAcked))
 	for i := range verified {
@@ -319,10 +320,11 @@ func NewServerTransferClass() *ServerTransferClass {
 			continue
 		}
 		candidates = append(candidates, credCandidate{
-			serverID: t.ServerID,
-			secret:   t.HandshakeSecret,
-			ackedAt:  *t.AckedAt,
-			toUserID: t.ToUserID,
+			serverID:   t.ServerID,
+			transferID: t.ID,
+			secret:     t.HandshakeSecret,
+			ackedAt:    *t.AckedAt,
+			toUserID:   t.ToUserID,
 		})
 	}
 	for i := range rollbackAcked {
@@ -331,14 +333,26 @@ func NewServerTransferClass() *ServerTransferClass {
 			continue
 		}
 		candidates = append(candidates, credCandidate{
-			serverID: t.ServerID,
-			secret:   t.RevertHandshakeSecret,
-			ackedAt:  *t.AckedAt,
-			isRevert: true,
-			toUserID: t.FromUserID,
+			serverID:   t.ServerID,
+			transferID: t.ID,
+			secret:     t.RevertHandshakeSecret,
+			ackedAt:    *t.AckedAt,
+			isRevert:   true,
+			toUserID:   t.FromUserID,
 		})
 	}
+	// Sort newest-first by AckedAt, breaking ties with transferID. AckedAt
+	// alone is not enough on platforms whose time.Now() granularity is
+	// coarse (Windows: ~15.6ms): MarkVerified and the immediately-following
+	// MarkRevertDelivered routinely produce identical timestamps, and a
+	// stable sort then leaves the Verified candidate (appended first) ahead
+	// of the rollback that is actually on disk, locking the agent out on
+	// restart. transferID is monotonically increasing within a server's
+	// transfer lifecycle, so the later rotation always wins the tiebreak.
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].ackedAt.Equal(candidates[j].ackedAt) {
+			return candidates[i].transferID > candidates[j].transferID
+		}
 		return candidates[i].ackedAt.After(candidates[j].ackedAt)
 	})
 
