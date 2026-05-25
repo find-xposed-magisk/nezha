@@ -119,6 +119,35 @@ func (s *NezhaHandler) GetStream(streamId string) (*ioStreamContext, error) {
 	return nil, errors.New("stream not found")
 }
 
+// RevokeStreamsForServer tears down every IOStream whose targetServerID
+// matches serverID. Called by the singleton package via the
+// ServerTransferStreamRevocationHook on every transfer ownership
+// transition — a stream the previous owner had open against this server
+// must not survive into the new tenant, otherwise terminal/file-manager/NAT
+// sessions become post-transfer hijack channels (effectively RCE).
+//
+// Underlying IO pipes are closed inline so the dashboard websocket loop
+// sees EOF immediately rather than at the next idle-timeout.
+func (s *NezhaHandler) RevokeStreamsForServer(serverID uint64) {
+	if serverID == 0 {
+		return
+	}
+	s.ioStreamMutex.Lock()
+	defer s.ioStreamMutex.Unlock()
+	for streamId, ctx := range s.ioStreams {
+		if ctx.targetServerID != serverID {
+			continue
+		}
+		if ctx.userIo != nil {
+			ctx.userIo.Close()
+		}
+		if ctx.agentIo != nil {
+			ctx.agentIo.Close()
+		}
+		delete(s.ioStreams, streamId)
+	}
+}
+
 func (s *NezhaHandler) CloseStream(streamId string) error {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
@@ -135,6 +164,8 @@ func (s *NezhaHandler) CloseStream(streamId string) error {
 
 	return nil
 }
+
+
 
 func (s *NezhaHandler) UserConnected(streamId string, userIo io.ReadWriteCloser) error {
 	stream, err := s.GetStream(streamId)

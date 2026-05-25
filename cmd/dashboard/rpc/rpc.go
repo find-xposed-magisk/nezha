@@ -24,6 +24,10 @@ import (
 func ServeRPC() *grpc.Server {
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(getRealIp, waf))
 	rpcService.NezhaHandlerSingleton = rpcService.NewNezhaHandler()
+	// Install the IOStream revocation hook so ServerTransferShared can tear
+	// down terminal/FM/NAT sessions held by the previous owner on every
+	// ownership rotation (Register/revertTransition/OnServersDeleted).
+	singleton.ServerTransferStreamRevocationHook = rpcService.NezhaHandlerSingleton.RevokeStreamsForServer
 	proto.RegisterNezhaServiceServer(server, rpcService.NezhaHandlerSingleton)
 	return server
 }
@@ -89,22 +93,30 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				}
 
 				server, _ := singleton.ServerShared.Get(id)
-				if server == nil || server.TaskStream == nil {
+				if server == nil {
+					continue
+				}
+				stream := server.GetTaskStream()
+				if stream == nil {
 					continue
 				}
 
 				if canSendTaskToServer(task, server) {
-					server.TaskStream.Send(task.PB())
+					stream.Send(task.PB())
 				}
 			}
 		case model.ServiceCoverAll:
 			for id, server := range singleton.ServerShared.Range {
-				if server == nil || server.TaskStream == nil || task.SkipServers[id] {
+				if server == nil || task.SkipServers[id] {
+					continue
+				}
+				stream := server.GetTaskStream()
+				if stream == nil {
 					continue
 				}
 
 				if canSendTaskToServer(task, server) {
-					server.TaskStream.Send(task.PB())
+					stream.Send(task.PB())
 				}
 			}
 		}
@@ -115,17 +127,27 @@ func DispatchKeepalive() {
 	singleton.CronShared.AddFunc("@every 20s", func() {
 		list := singleton.ServerShared.GetSortedList()
 		for _, s := range list {
-			if s == nil || s.TaskStream == nil {
+			if s == nil {
 				continue
 			}
-			s.TaskStream.Send(&proto.Task{Type: model.TaskTypeKeepalive})
+			stream := s.GetTaskStream()
+			if stream == nil {
+				continue
+			}
+			stream.Send(&proto.Task{Type: model.TaskTypeKeepalive})
 		}
 	})
 }
 
 func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	server, _ := singleton.ServerShared.Get(natConfig.ServerID)
-	if server == nil || server.TaskStream == nil {
+	if server == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("server not found or not connected"))
+		return
+	}
+	stream := server.GetTaskStream()
+	if stream == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("server not found or not connected"))
 		return
@@ -157,7 +179,7 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		return
 	}
 
-	if err := server.TaskStream.Send(&proto.Task{
+	if err := stream.Send(&proto.Task{
 		Type: model.TaskTypeNAT,
 		Data: string(taskData),
 	}); err != nil {
@@ -192,5 +214,5 @@ func canSendTaskToServer(task *model.Service, server *model.Server) bool {
 	}
 	singleton.UserLock.RUnlock()
 
-	return task.UserID == server.UserID || role.IsAdmin()
+	return task.UserID == server.GetUserID() || role.IsAdmin()
 }

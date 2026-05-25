@@ -85,6 +85,16 @@ type ServiceSentinel struct {
 	// 30天数据缓存
 	monthlyStatusLock sync.Mutex
 	monthlyStatus     map[uint64]*serviceResponseItem
+
+	// closeOnce + workerWG together let Close() wait for the worker goroutine
+	// to fully exit. Without this, a test that swaps ServiceSentinelShared back
+	// to its original value in t.Cleanup races against the still-running
+	// worker, which keeps reading globals like Conf/CronShared/NotificationShared.
+	// Production never calls Close() — the process exits while the worker is
+	// still running and that is fine — but tests must drain the worker before
+	// restoring globals.
+	closeOnce sync.Once
+	workerWG  sync.WaitGroup
 }
 
 // NewServiceSentinel 创建服务监控器
@@ -113,7 +123,11 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service) (*Serv
 	ss.loadTodayStats(today)
 
 	// 启动服务监控器
-	go ss.worker()
+	ss.workerWG.Add(1)
+	go func() {
+		defer ss.workerWG.Done()
+		ss.worker()
+	}()
 
 	// 每日将游标往后推一天
 	_, err = CronShared.AddFunc("0 0 0 * * *", ss.refreshMonthlyServiceStatus)
@@ -489,10 +503,34 @@ func canReportServiceResult(service *model.Service, reporter *model.Server, task
 		return false
 	}
 
-	return service.UserID == reporter.UserID || userIsAdmin(service.UserID)
+	return service.UserID == reporter.GetUserID() || userIsAdmin(service.UserID)
+}
+
+// Close shuts down the ServiceSentinel worker goroutine and waits for it to
+// exit. It is idempotent and safe to call more than once.
+//
+// Why this exists: the worker reads multiple package-level globals during
+// each report (Conf, CronShared via notifyCheck, NotificationShared via
+// UnMuteNotification, ServerShared, TSDBShared). A test fixture that swaps
+// those globals out in t.Cleanup MUST first call Close() — otherwise the
+// cleanup write races the still-running worker's read and `go test -race`
+// fires (see security_regression_test.go newServiceMonitorSecurityHarness).
+// Production never calls Close because the process exits with the worker
+// still running, which is fine.
+func (ss *ServiceSentinel) Close() {
+	ss.closeOnce.Do(func() {
+		close(ss.serviceReportChannel)
+		ss.workerWG.Wait()
+	})
 }
 
 // worker 服务监控的实际工作流程
+//
+// IMPORTANT: this loop reads several package-level globals (Conf, CronShared,
+// NotificationShared, ServerShared, TSDBShared). Any test that replaces those
+// globals via t.Cleanup must first call ServiceSentinel.Close() so the worker
+// drains and exits before the swap, otherwise the race detector trips. See
+// the Close() comment above for the full rationale.
 func (ss *ServiceSentinel) worker() {
 	// 从服务状态汇报管道获取汇报的服务数据
 	for r := range ss.serviceReportChannel {

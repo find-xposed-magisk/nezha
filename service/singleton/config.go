@@ -1,6 +1,7 @@
 package singleton
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,13 @@ func InitConfigFromPath(path string) error {
 	err := Conf.Read(path, FrontendTemplates)
 	if err != nil {
 		return err
+	}
+	rotated, err := Conf.RotateJWTSecretKeyIfNeeded(Version)
+	if err != nil {
+		return err
+	}
+	if rotated {
+		log.Printf("NEZHA>> Rotated jwt_secret_key for dashboard version %s", Version)
 	}
 
 	Conf.updateIgnoredIPNotificationID()

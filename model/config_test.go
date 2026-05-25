@@ -151,6 +151,111 @@ func TestReadConfig(t *testing.T) {
 	})
 }
 
+func TestRotateJWTSecretKeyIfNeeded(t *testing.T) {
+	tests := []struct {
+		name               string
+		initialMarker      string
+		currentVersion     string
+		wantRotated        bool
+		wantStoredVersion  string
+		wantSecretChanged  bool
+		wantSavedConfigKey bool
+	}{
+		{
+			name:               "empty marker rotates leaked secret",
+			currentVersion:     "v2.0.13",
+			wantRotated:        true,
+			wantStoredVersion:  "v2.0.13",
+			wantSecretChanged:  true,
+			wantSavedConfigKey: true,
+		},
+		{
+			name:               "old marker rotates leaked secret",
+			initialMarker:      "v2.0.12",
+			currentVersion:     "v2.0.14",
+			wantRotated:        true,
+			wantStoredVersion:  "v2.0.14",
+			wantSecretChanged:  true,
+			wantSavedConfigKey: true,
+		},
+		{
+			name:               "threshold marker keeps secret and advances marker",
+			initialMarker:      "v2.0.13",
+			currentVersion:     "v2.0.14",
+			wantStoredVersion:  "v2.0.14",
+			wantSavedConfigKey: true,
+		},
+		{
+			name:              "current marker keeps secret",
+			initialMarker:     "v2.0.14",
+			currentVersion:    "v2.0.14",
+			wantStoredVersion: "v2.0.14",
+		},
+		{
+			name:           "debug version skips rotation and marker update",
+			currentVersion: "debug",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := newTempConfig(t, "")
+			t.Cleanup(func() { os.Remove(file) })
+
+			c := &Config{
+				JWTSecretKey:                   "leaked-secret",
+				JWTSecretKeyLastRotatedVersion: tt.initialMarker,
+				filePath:                       file,
+			}
+
+			rotated, err := c.RotateJWTSecretKeyIfNeeded(tt.currentVersion)
+			if err != nil {
+				t.Fatalf("rotate jwt secret key failed: %v", err)
+			}
+			if rotated != tt.wantRotated {
+				t.Fatalf("rotated = %v, want %v", rotated, tt.wantRotated)
+			}
+			if c.JWTSecretKeyLastRotatedVersion != tt.wantStoredVersion {
+				t.Fatalf("jwt secret key marker = %q, want %q", c.JWTSecretKeyLastRotatedVersion, tt.wantStoredVersion)
+			}
+			secretChanged := c.JWTSecretKey != "leaked-secret"
+			if secretChanged != tt.wantSecretChanged {
+				t.Fatalf("secret changed = %v, want %v", secretChanged, tt.wantSecretChanged)
+			}
+
+			saved, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("read saved config: %v", err)
+			}
+			hasMarker := strings.Contains(string(saved), "jwt_secret_key_last_rotated_version")
+			if hasMarker != tt.wantSavedConfigKey {
+				t.Fatalf("saved marker present = %v, want %v, config = %s", hasMarker, tt.wantSavedConfigKey, saved)
+			}
+		})
+	}
+}
+
+// Mirrors the upstream single-block declaration so iota lines up exactly:
+// ConfigUsePeerIP occupies iota=0 (as a typed string), ConfigCoverAll=1,
+// ConfigCoverIgnoreAll=2. Pins persisted `cover` semantics.
+const (
+	originalConfigUsePeerIP = "NZ::Use-Peer-IP"
+	originalConfigCoverAll  = iota
+	originalConfigCoverIgnoreAll
+)
+
+func TestConfigCoverConstantValues(t *testing.T) {
+	if ConfigUsePeerIP != originalConfigUsePeerIP {
+		t.Fatalf("ConfigUsePeerIP = %q, want %q", ConfigUsePeerIP, originalConfigUsePeerIP)
+	}
+	if ConfigCoverAll != originalConfigCoverAll {
+		t.Fatalf("ConfigCoverAll = %d, want original value %d", ConfigCoverAll, originalConfigCoverAll)
+	}
+	if ConfigCoverIgnoreAll != originalConfigCoverIgnoreAll {
+		t.Fatalf("ConfigCoverIgnoreAll = %d, want original value %d", ConfigCoverIgnoreAll, originalConfigCoverIgnoreAll)
+	}
+}
+
 func newTempConfig(t *testing.T, cfg string) string {
 	t.Helper()
 

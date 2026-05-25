@@ -18,6 +18,7 @@ import (
 type requestTaskSecurityStream struct {
 	ctx     context.Context
 	results []*pb.TaskResult
+	onRecv  func()
 	onSend  func(*pb.Task)
 	sendErr error
 }
@@ -31,6 +32,9 @@ func (s *requestTaskSecurityStream) Send(task *pb.Task) error {
 
 func (s *requestTaskSecurityStream) Recv() (*pb.TaskResult, error) {
 	if len(s.results) == 0 {
+		if s.onRecv != nil {
+			s.onRecv()
+		}
 		return nil, context.Canceled
 	}
 	result := s.results[0]
@@ -201,6 +205,52 @@ func TestRequestTaskSkipsAlertTriggerCronResultAfterSendFailure(t *testing.T) {
 	}
 }
 
+func TestRequestTaskClearsTaskStreamOnRecvError(t *testing.T) {
+	reporter := requestTaskSecurityServer(7, 200, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, nil, map[uint64]model.UserInfo{
+		200: {Role: model.RoleMember},
+	}, map[string]uint64{"reporter-secret": 200})
+
+	stream := requestTaskSecurityAuthedStream("reporter-secret", reporter.UUID)
+	err := NewNezhaHandler().RequestTask(stream)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected RequestTask to finish after Recv error, got %v", err)
+	}
+
+	server, ok := singleton.ServerShared.Get(reporter.ID)
+	if !ok {
+		t.Fatalf("server %d not found", reporter.ID)
+	}
+	if got := server.GetTaskStream(); got != nil {
+		t.Fatalf("dead RequestTask stream must be cleared, got %T", got)
+	}
+}
+
+func TestRequestTaskKeepsNewerTaskStreamOnOldRecvError(t *testing.T) {
+	reporter := requestTaskSecurityServer(7, 200, "dddddddd-dddd-dddd-dddd-dddddddddddd")
+	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, nil, map[uint64]model.UserInfo{
+		200: {Role: model.RoleMember},
+	}, map[string]uint64{"reporter-secret": 200})
+
+	server, ok := singleton.ServerShared.Get(reporter.ID)
+	if !ok {
+		t.Fatalf("server %d not found", reporter.ID)
+	}
+	newer := &requestTaskSecurityStream{ctx: context.Background()}
+	old := requestTaskSecurityAuthedStream("reporter-secret", reporter.UUID)
+	old.onRecv = func() {
+		server.SetTaskStream(newer)
+	}
+
+	err := NewNezhaHandler().RequestTask(old)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected RequestTask to finish after Recv error, got %v", err)
+	}
+	if got := server.GetTaskStream(); got != newer {
+		t.Fatalf("old stream cleanup must keep newer stream, got %T", got)
+	}
+}
+
 func setupRequestTaskSecurityFixture(t *testing.T, servers []*model.Server, crons []*model.Cron, users map[uint64]model.UserInfo, agentSecrets map[string]uint64) {
 	t.Helper()
 
@@ -305,22 +355,26 @@ func connectRequestTaskSecurityTaskStreamWithSendHook(t *testing.T, serverID uin
 	if !ok {
 		t.Fatalf("server %d not found", serverID)
 	}
-	server.TaskStream = &requestTaskSecurityStream{ctx: context.Background(), sendErr: sendErr, onSend: onSend}
+	server.SetTaskStream(&requestTaskSecurityStream{ctx: context.Background(), sendErr: sendErr, onSend: onSend})
 }
 
 func runRequestTaskSecurityResult(t *testing.T, secret string, uuid string, result *pb.TaskResult) {
 	t.Helper()
 
-	stream := &requestTaskSecurityStream{
+	stream := requestTaskSecurityAuthedStream(secret, uuid)
+	stream.results = []*pb.TaskResult{result}
+	err := NewNezhaHandler().RequestTask(stream)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected RequestTask to finish after test result, got %v", err)
+	}
+}
+
+func requestTaskSecurityAuthedStream(secret string, uuid string) *requestTaskSecurityStream {
+	return &requestTaskSecurityStream{
 		ctx: metadata.NewIncomingContext(context.Background(), metadata.Pairs(
 			"client_secret", secret,
 			"client_uuid", uuid,
 		)),
-		results: []*pb.TaskResult{result},
-	}
-	err := NewNezhaHandler().RequestTask(stream)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected RequestTask to finish after test result, got %v", err)
 	}
 }
 

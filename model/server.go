@@ -3,6 +3,7 @@ package model
 import (
 	"log"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -32,11 +33,66 @@ type Server struct {
 	GeoIP      *GeoIP     `gorm:"-" json:"geoip,omitempty"`
 	LastActive time.Time  `gorm:"-" json:"last_active,omitempty"`
 
-	TaskStream  pb.NezhaService_RequestTaskServer `gorm:"-" json:"-"`
-	ConfigCache chan any                          `gorm:"-" json:"-"`
+	// taskStream MUST be accessed only via SetTaskStream / GetTaskStream. Direct
+	// field access from outside this file races with the gRPC RequestTask
+	// handler that reassigns the stream on every reconnect — a torn read of the
+	// two-word interface header would panic on a subsequent .Send call. The
+	// atomic.Pointer + holder struct lets us swap the stream lock-free while
+	// every reader observes a single, consistent value.
+	taskStream  atomic.Pointer[taskStreamHolder]
+	ConfigCache chan any `gorm:"-" json:"-"`
 
 	PrevTransferInSnapshot  uint64 `gorm:"-" json:"-"` // 上次数据点时的入站使用量
 	PrevTransferOutSnapshot uint64 `gorm:"-" json:"-"` // 上次数据点时的出站使用量
+}
+
+// taskStreamHolder wraps the interface so atomic.Pointer (which requires a
+// concrete pointed-to type) can publish it atomically. The previous bare
+// field `TaskStream pb.NezhaService_RequestTaskServer` was a plain interface
+// value: two words on the heap (type ptr + data ptr). Concurrent assignment
+// produced torn reads detectable by `go test -race` and crashable in production.
+type taskStreamHolder struct {
+	s pb.NezhaService_RequestTaskServer
+}
+
+// SetTaskStream publishes the agent's RequestTask stream so other goroutines
+// can deliver tasks to the agent. Pass nil to detach (e.g. on disconnect).
+func (s *Server) SetTaskStream(stream pb.NezhaService_RequestTaskServer) {
+	if stream == nil {
+		s.taskStream.Store(nil)
+		return
+	}
+	s.taskStream.Store(&taskStreamHolder{s: stream})
+}
+
+// ClearTaskStreamIfCurrent detaches stream only if it is still the published
+// RequestTask stream. Disconnect cleanup uses this guard so an old stream
+// returning after a reconnect cannot erase the newer live stream.
+func (s *Server) ClearTaskStreamIfCurrent(stream pb.NezhaService_RequestTaskServer) bool {
+	if stream == nil {
+		return false
+	}
+	for {
+		h := s.taskStream.Load()
+		if h == nil || h.s != stream {
+			return false
+		}
+		if s.taskStream.CompareAndSwap(h, nil) {
+			return true
+		}
+	}
+}
+
+// GetTaskStream returns the currently-published stream, or nil if the agent
+// is offline. Callers MUST capture the return into a local variable before
+// using it — re-reading via GetTaskStream() across a Send call reopens the
+// race we're trying to close.
+func (s *Server) GetTaskStream() pb.NezhaService_RequestTaskServer {
+	h := s.taskStream.Load()
+	if h == nil {
+		return nil
+	}
+	return h.s
 }
 
 func InitServer(s *Server) {
@@ -51,7 +107,9 @@ func (s *Server) CopyFromRunningServer(old *Server) {
 	s.State = old.State
 	s.GeoIP = old.GeoIP
 	s.LastActive = old.LastActive
-	s.TaskStream = old.TaskStream
+	// taskStream is an atomic.Pointer; copy the published value rather than
+	// the field itself (atomic.Pointer is not safe to copy by value).
+	s.SetTaskStream(old.GetTaskStream())
 	s.ConfigCache = old.ConfigCache
 	s.PrevTransferInSnapshot = old.PrevTransferInSnapshot
 	s.PrevTransferOutSnapshot = old.PrevTransferOutSnapshot
@@ -71,6 +129,50 @@ func (s *Server) AfterFind(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// ServerOwnerInfo carries the user-facing identity for Server.UserID. It is
+// returned by the lookup function installed by the singleton layer; model
+// must not import singleton (cycle), so the dependency flows through a
+// package-level function variable instead.
+type ServerOwnerInfo struct {
+	ID       uint64 `json:"id"`
+	Username string `json:"username,omitempty"`
+}
+
+// ServerOwnerLookup is installed by singleton at startup to resolve a
+// Server.UserID into a display-ready owner record. Returns ok=false when
+// the uid does not map to a known user; the caller renders that as an
+// "unknown user" placeholder so deleted-user rows stay debuggable. Left nil
+// in tests / headless contexts so the JSON simply omits the owner field.
+var ServerOwnerLookup func(uid uint64) (ServerOwnerInfo, bool)
+
+type serverJSON Server
+
+type serverWithOwner struct {
+	*serverJSON
+	Owner *ServerOwnerInfo `json:"owner,omitempty"`
+}
+
+// MarshalJSON projects Server.UserID into a structured owner field on the
+// wire. Server.UserID itself stays `json:"-"` (set on Common) so callers
+// that do not need owner info pay nothing and members do not accidentally
+// receive raw uid integers. The lookup function is consulted only when
+// installed; if absent we still emit a minimal {id} record so clients can
+// at least distinguish ownership, except for uid=0 which is the legacy
+// global-secret pseudo-owner and is best surfaced as such by the caller's
+// translation table on the frontend.
+func (s *Server) MarshalJSON() ([]byte, error) {
+	owner := &ServerOwnerInfo{ID: s.GetUserID()}
+	if ServerOwnerLookup != nil {
+		if info, ok := ServerOwnerLookup(owner.ID); ok {
+			owner.Username = info.Username
+		}
+	}
+	return json.Marshal(serverWithOwner{
+		serverJSON: (*serverJSON)(s),
+		Owner:      owner,
+	})
 }
 
 func (s *Server) SplitList(x []*Server) ([]*Server, []*Server) {

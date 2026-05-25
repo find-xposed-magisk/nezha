@@ -40,12 +40,21 @@ func NewNezhaHandler() *NezhaHandler {
 func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) error {
 	var clientID uint64
 	var err error
-	if clientID, err = s.Auth.Check(stream.Context()); err != nil {
+	if clientID, err = s.Auth.CheckRequestTask(stream.Context()); err != nil {
 		return err
 	}
 
 	server, _ := singleton.ServerShared.Get(clientID)
-	server.TaskStream = stream
+	server.SetTaskStream(stream)
+	defer server.ClearTaskStreamIfCurrent(stream)
+	// If a transfer is mid-flight for this server, the agent has just brought
+	// up a fresh bidi stream — this is the moment to (re)deliver the
+	// ApplyConfig task carrying the new owner's AgentSecret. Pushes from
+	// dashboard mutation time are best-effort; this hook is the reliable
+	// re-delivery point that closes the offline-during-transfer gap.
+	if singleton.ServerTransferShared != nil {
+		singleton.ServerTransferShared.OnAgentReconnect(clientID)
+	}
 	var result *pb.TaskResult
 	for {
 		result, err = stream.Recv()
@@ -82,6 +91,27 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 					continue
 				}
 				server.ConfigCache <- result.Data
+			}
+		case model.TaskTypeServerTransferApply:
+			// Authorization: TaskResult.Id is attacker-controlled. Without
+			// the pending.ID == result.Id check below, agent A could cancel
+			// server B's in-flight transfer by spoofing B's transfer ID —
+			// same class of bug as commit 02129f1 in the cron path.
+			// Successful=true here is best-effort only; the authoritative
+			// verification is the agent's reconnect under the new secret.
+			if singleton.ServerTransferShared == nil {
+				continue
+			}
+			pending, ok := singleton.ServerTransferShared.LookupPending(clientID)
+			if !ok || pending.ID != result.GetId() {
+				log.Printf("NEZHA>> ServerTransferApply result ignored: clientID=%d reported transferID=%d but no matching pending transfer", clientID, result.GetId())
+				continue
+			}
+			if result.GetSuccessful() {
+				continue
+			}
+			if _, err := singleton.ServerTransferShared.MarkFailed(result.GetId(), result.GetData()); err != nil {
+				log.Printf("NEZHA>> ServerTransfer MarkFailed(%d) failed: %v", result.GetId(), err)
 			}
 		default:
 			if model.IsServiceSentinelNeeded(result.GetType()) {

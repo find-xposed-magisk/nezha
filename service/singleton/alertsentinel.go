@@ -149,7 +149,7 @@ func checkStatus() {
 				role = u.Role
 			}
 			UserLock.RUnlock()
-			if alert.UserID != server.UserID && !role.IsAdmin() {
+			if alert.UserID != server.GetUserID() && !role.IsAdmin() {
 				continue
 			}
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.

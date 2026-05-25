@@ -31,7 +31,11 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	}
 
 	server, _ := singleton.ServerShared.Get(createTerminalReq.ServerID)
-	if server == nil || server.TaskStream == nil {
+	if server == nil {
+		return nil, singleton.Localizer.ErrorT("server not found or not connected")
+	}
+	stream := server.GetTaskStream()
+	if stream == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}
 
@@ -49,7 +53,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,
 	})
-	if err := server.TaskStream.Send(&proto.Task{
+	if err := stream.Send(&proto.Task{
 		Type: model.TaskTypeTerminalGRPC,
 		Data: string(terminalData),
 	}); err != nil {

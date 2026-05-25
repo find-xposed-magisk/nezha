@@ -264,12 +264,13 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				if !cronCanSendToServer(cr, s) {
 					return
 				}
-				if s.TaskStream != nil {
+				stream := s.GetTaskStream()
+				if stream != nil {
 					cronShared := CronShared
 					if cronShared != nil {
 						cronShared.reserveAlertTriggerCronResult(cr.ID, s.ID)
 					}
-					if err := s.TaskStream.Send(&pb.Task{
+					if err := stream.Send(&pb.Task{
 						Id:   cr.ID,
 						Data: cr.Command,
 						Type: model.TaskTypeCommand,
@@ -296,8 +297,8 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 			if cr.Cover == model.CronCoverIgnoreAll && !crIgnoreMap[s.ID] {
 				continue
 			}
-			if s.TaskStream != nil {
-				s.TaskStream.Send(&pb.Task{
+			if stream := s.GetTaskStream(); stream != nil {
+				stream.Send(&pb.Task{
 					Id:   cr.ID,
 					Data: cr.Command,
 					Type: model.TaskTypeCommand,
@@ -313,7 +314,7 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 }
 
 func cronCanSendToServer(cr *model.Cron, server *model.Server) bool {
-	return cr.UserID == server.UserID || userIsAdmin(cr.UserID)
+	return cr.UserID == server.GetUserID() || userIsAdmin(cr.UserID)
 }
 
 func userIsAdmin(userID uint64) bool {

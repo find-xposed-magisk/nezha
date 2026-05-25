@@ -80,7 +80,6 @@ func execCase(t *testing.T, item testSt) {
 			CountryCode: "",
 		},
 		LastActive:              time.Time{},
-		TaskStream:              nil,
 		PrevTransferInSnapshot:  0,
 		PrevTransferOutSnapshot: 0,
 	}

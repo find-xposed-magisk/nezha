@@ -40,10 +40,34 @@ func initUser() {
 
 		UserInfoMap[u.ID] = model.UserInfo{
 			Role:        u.Role,
+			Username:    u.Username,
 			AgentSecret: u.AgentSecret,
 		}
 		AgentSecretToUserId[u.AgentSecret] = u.ID
 	}
+
+	model.ServerOwnerLookup = lookupServerOwner
+}
+
+// lookupServerOwner resolves Server.UserID into a display-ready owner
+// record for model.Server.MarshalJSON. uid=0 is the legacy global agent
+// secret (a pseudo-owner with no User row) and intentionally returns
+// ok=false with no username; the frontend renders it as "Global". Other
+// uids return ok=false when the user has been deleted, so the JSON still
+// carries the bare id and the frontend can render an "Unknown (#<uid>)"
+// placeholder. RLock is required because OnUserUpdate / OnUserDelete may
+// mutate UserInfoMap concurrently with serialization.
+func lookupServerOwner(uid uint64) (model.ServerOwnerInfo, bool) {
+	if uid == 0 {
+		return model.ServerOwnerInfo{}, false
+	}
+	UserLock.RLock()
+	info, ok := UserInfoMap[uid]
+	UserLock.RUnlock()
+	if !ok {
+		return model.ServerOwnerInfo{}, false
+	}
+	return model.ServerOwnerInfo{ID: uid, Username: info.Username}, true
 }
 
 func OnUserUpdate(u *model.User) {
@@ -56,6 +80,7 @@ func OnUserUpdate(u *model.User) {
 
 	UserInfoMap[u.ID] = model.UserInfo{
 		Role:        u.Role,
+		Username:    u.Username,
 		AgentSecret: u.AgentSecret,
 	}
 	AgentSecretToUserId[u.AgentSecret] = u.ID
@@ -67,6 +92,10 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 
 	if len(id) < 1 {
 		return Localizer.ErrorT("user id not specified")
+	}
+
+	if ServerTransferShared != nil {
+		ServerTransferShared.OnUsersDeleted(id)
 	}
 
 	var (
@@ -127,6 +156,11 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 				}
 			}
 			AlertsLock.Unlock()
+			// Cancel pending transfers before ServerShared drops the
+			// in-memory entry: same ordering rationale as batchDeleteServer.
+			if ServerTransferShared != nil {
+				ServerTransferShared.OnServersDeleted(servers)
+			}
 			ServerShared.Delete(servers)
 		}
 

@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -117,6 +116,11 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/batch-delete/server", commonHandler(batchDeleteServer))
 	auth.POST("/batch-move/server", commonHandler(batchMoveServer))
 	auth.POST("/force-update/server", commonHandler(forceUpdateServer))
+
+	auth.GET("/transfer", listHandler(listServerTransfer))
+	auth.POST("/transfer/:id/cancel", commonHandler(cancelServerTransfer))
+	auth.POST("/transfer/:id/retry", commonHandler(retryServerTransfer))
+	auth.GET("/ws/transfer", commonHandler(transferStream))
 
 	auth.GET("/notification", listHandler(listNotification))
 	auth.POST("/notification", commonHandler(createNotification))
@@ -320,25 +324,50 @@ func getUid(c *gin.Context) uint64 {
 }
 
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
-	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string, customStatusCode int) bool {
-		if _, err := os.Stat(path); err == nil {
-			http.ServeFile(utils.NewGinCustomWriter(c, customStatusCode), c.Request, path)
-			return true
-		}
-		f, err := fs.Open(path)
-		if err != nil {
-			return false
-		}
-		defer f.Close()
-		fileStat, err := f.Stat()
+	serveFile := func(c *gin.Context, name string, file fs.File, customStatusCode int) bool {
+		defer file.Close()
+		fileStat, err := file.Stat()
 		if err != nil {
 			return false
 		}
 		if fileStat.IsDir() {
 			return false
 		}
-		http.ServeContent(utils.NewGinCustomWriter(c, customStatusCode), c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker))
+		readSeeker, ok := file.(io.ReadSeeker)
+		if !ok {
+			return false
+		}
+		http.ServeContent(utils.NewGinCustomWriter(c, customStatusCode), c.Request, name, fileStat.ModTime(), readSeeker)
 		return true
+	}
+
+	checkLocalFileOrFs := func(c *gin.Context, frontendFS fs.FS, templateRoot, filePath string, customStatusCode int) bool {
+		if filePath != "" {
+			localRoot, err := os.OpenRoot(templateRoot)
+			if err == nil {
+				defer localRoot.Close()
+				// URL paths must stay inside the selected template root; never join them against the process cwd.
+				if file, err := localRoot.Open(filePath); err == nil && serveFile(c, filePath, file, customStatusCode) {
+					return true
+				}
+			}
+		}
+
+		if !fs.ValidPath(filePath) {
+			return false
+		}
+		templateFS, err := fs.Sub(frontendFS, templateRoot)
+		if err != nil {
+			return false
+		}
+		file, err := templateFS.Open(filePath)
+		if err != nil {
+			return false
+		}
+		if serveFile(c, filePath, file, customStatusCode) {
+			return true
+		}
+		return false
 	}
 
 	frontendPageUrlRegistry := []*regexp.Regexp{
@@ -361,6 +390,11 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		regexp.MustCompile(`^/dashboard/settings/user$`),
 		regexp.MustCompile(`^/dashboard/settings/online-user$`),
 		regexp.MustCompile(`^/dashboard/settings/waf$`),
+		// 注意：这里的白名单决定哪些 URL 走 index.html fallback；漏一条就会把
+		// 直接刷新该页面变成 404（HTTP 状态码层面，body 仍是 index.html，所以
+		// 浏览器内 SPA 看起来正常，但 monitoring / 链接预览会以为站点挂了）。
+		// 新增前端路由时必须在 admin-frontend/src/main.tsx 与这里同步加。
+		regexp.MustCompile(`^/dashboard/transfer$`),
 	}
 
 	getFallbackStatusCode := func(path string) int {
@@ -385,22 +419,22 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		}
 
 		fallbackStatusCode := getFallbackStatusCode(c.Request.URL.Path)
-		if strings.HasPrefix(c.Request.URL.Path, "/dashboard") {
-			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard")
-			localFilePath := path.Join(singleton.Conf.AdminTemplate, stripPath)
-			if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
+		// Only /dashboard/ belongs to the admin frontend; /dashboard.. must not be trimmed into ../.
+		if strings.HasPrefix(c.Request.URL.Path, "/dashboard/") {
+			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard/")
+			if checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, stripPath, http.StatusOK) {
 				return
 			}
-			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html", fallbackStatusCode) {
+			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, "index.html", fallbackStatusCode) {
 				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
 		}
-		localFilePath := path.Join(singleton.Conf.UserTemplate, c.Request.URL.Path)
-		if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
+		stripPath := strings.TrimPrefix(c.Request.URL.Path, "/")
+		if checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, stripPath, http.StatusOK) {
 			return
 		}
-		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html", fallbackStatusCode) {
+		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, "index.html", fallbackStatusCode) {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}

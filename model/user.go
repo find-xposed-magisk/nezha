@@ -32,6 +32,7 @@ type User struct {
 
 type UserInfo struct {
 	Role        Role
+	Username    string
 	AgentSecret string
 }
 
