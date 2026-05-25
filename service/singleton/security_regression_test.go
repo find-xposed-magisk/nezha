@@ -39,6 +39,16 @@ func (s *capturedTaskStream) Context() context.Context      { return context.Bac
 func (s *capturedTaskStream) SendMsg(any) error             { return nil }
 func (s *capturedTaskStream) RecvMsg(any) error             { return context.Canceled }
 
+// withTaskStream attaches a TaskStream to a freshly constructed Server using the
+// new atomic accessor. The field itself is unexported (see Fix #12) precisely
+// because direct struct-literal access invited torn interface reads on hot
+// paths — tests use this helper rather than reaching in, mirroring production
+// callsites.
+func withTaskStream(s *model.Server, stream pb.NezhaService_RequestTaskServer) *model.Server {
+	s.SetTaskStream(stream)
+	return s
+}
+
 func replaceServerSharedForSecurityTest(t *testing.T, servers ...*model.Server) {
 	t.Helper()
 
@@ -75,8 +85,8 @@ func TestCronTriggerSkipsServersOwnedByOtherUsers(t *testing.T) {
 	firstStream := newCapturedTaskStream()
 	secondStream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server", TaskStream: firstStream},
-		&model.Server{Common: model.Common{ID: 2, UserID: 200}, Name: "admin-server", TaskStream: secondStream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, firstStream),
+		withTaskStream(&model.Server{Common: model.Common{ID: 2, UserID: 200}, Name: "admin-server"}, secondStream),
 	)
 
 	cronTask := &model.Cron{
@@ -95,7 +105,7 @@ func TestCronTriggerSkipsServersOwnedByOtherUsers(t *testing.T) {
 func TestSendTriggerTasksSkipsCronOwnedByAnotherUser(t *testing.T) {
 	attackerStream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "attacker-server", TaskStream: attackerStream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "attacker-server"}, attackerStream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin},
@@ -147,7 +157,7 @@ func assertNoTask(t *testing.T, stream *capturedTaskStream) {
 func TestCronTriggerSendsToMemberOwnedServer(t *testing.T) {
 	memberStream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server", TaskStream: memberStream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, memberStream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		100: {Role: model.RoleMember},
@@ -168,8 +178,8 @@ func TestCronTriggerAdminCronFansOutAcrossOwners(t *testing.T) {
 	first := newCapturedTaskStream()
 	second := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server", TaskStream: first},
-		&model.Server{Common: model.Common{ID: 2, UserID: 200}, Name: "admin-server", TaskStream: second},
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, first),
+		withTaskStream(&model.Server{Common: model.Common{ID: 2, UserID: 200}, Name: "admin-server"}, second),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin},
@@ -192,7 +202,7 @@ func TestCronTriggerAdminCronFansOutAcrossOwners(t *testing.T) {
 func TestCronTriggerLegacyZeroOwnerFansOut(t *testing.T) {
 	first := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server", TaskStream: first},
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, first),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		100: {Role: model.RoleMember},
@@ -212,7 +222,7 @@ func TestCronTriggerLegacyZeroOwnerFansOut(t *testing.T) {
 func TestCronTriggerSkipsServersWhenOwnerNotKnown(t *testing.T) {
 	stream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server", TaskStream: stream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, stream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		100: {Role: model.RoleMember},
@@ -232,7 +242,7 @@ func TestCronTriggerSkipsServersWhenOwnerNotKnown(t *testing.T) {
 func TestSendTriggerTasksAllowsSelfOwnedCron(t *testing.T) {
 	stream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server", TaskStream: stream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server"}, stream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
@@ -257,7 +267,7 @@ func TestSendTriggerTasksAllowsSelfOwnedCron(t *testing.T) {
 func TestSendTriggerTasksAllowsAdminCallerToTriggerAny(t *testing.T) {
 	stream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 9, UserID: 100}, Name: "any-server", TaskStream: stream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 9, UserID: 100}, Name: "any-server"}, stream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin},
@@ -283,7 +293,7 @@ func TestSendTriggerTasksAllowsAdminCallerToTriggerAny(t *testing.T) {
 func TestSendTriggerTasksIgnoresUnknownTaskIDs(t *testing.T) {
 	stream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server", TaskStream: stream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server"}, stream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
@@ -304,7 +314,7 @@ func TestSendTriggerTasksIgnoresUnknownTaskIDs(t *testing.T) {
 func TestSendTriggerTasksMixedCronIDsOnlyFiresAllowed(t *testing.T) {
 	stream := newCapturedTaskStream()
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server", TaskStream: stream},
+		withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server"}, stream),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin},
@@ -540,7 +550,7 @@ func (s *failingTaskStream) Send(task *pb.Task) error {
 func TestCronTriggerRevokesAlertTriggerAuthorizationOnSendFailure(t *testing.T) {
 	failing := newFailingTaskStream(context.Canceled)
 	replaceServerSharedForSecurityTest(t,
-		&model.Server{Common: model.Common{ID: 7, UserID: 100}, Name: "broken-server", TaskStream: failing},
+		withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 100}, Name: "broken-server"}, failing),
 	)
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		100: {Role: model.RoleMember},
@@ -828,6 +838,12 @@ func newServiceMonitorSecurityHarness(t *testing.T, servers ...*model.Server) *S
 		t.Fatal(err)
 	}
 	ServiceSentinelShared = ss
+	// LIFO Cleanup ordering: this Close() runs BEFORE the earlier t.Cleanup that
+	// restores Conf/Cache/CronShared/NotificationShared/TSDBShared, so the
+	// worker has fully exited before we swap those globals out. Skipping this
+	// step causes `go test -race` to flag the write-vs-read between the
+	// teardown and the still-running worker.
+	t.Cleanup(func() { ss.Close() })
 	return ss
 }
 

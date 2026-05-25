@@ -56,7 +56,7 @@ func setupServerOwnershipFixture(t *testing.T) (stream *fakeTaskStream, reset fu
 
 	alice, _ := singleton.ServerShared.Get(1)
 	stream = &fakeTaskStream{}
-	alice.TaskStream = stream
+	alice.SetTaskStream(stream)
 
 	return stream, func() {
 		singleton.DB = originalDB

@@ -195,7 +195,7 @@ func getServerStat(withPublicNote bool, viewerUserID uint64, viewerIsAdmin bool)
 func filterServersForViewer(servers []*model.Server, viewerUserID uint64, viewerIsAdmin bool, withPublicNote bool) []model.StreamServer {
 	out := make([]model.StreamServer, 0, len(servers))
 	for _, server := range servers {
-		isOwnerOrAdmin := viewerIsAdmin || (viewerUserID != 0 && server.UserID == viewerUserID)
+		isOwnerOrAdmin := viewerIsAdmin || (viewerUserID != 0 && server.GetUserID() == viewerUserID)
 		if server.HideForGuest && !isOwnerOrAdmin {
 			continue
 		}

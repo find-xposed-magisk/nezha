@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
@@ -16,8 +17,12 @@ import (
 )
 
 const (
-	ConfigUsePeerIP = "NZ::Use-Peer-IP"
-	ConfigCoverAll  = iota
+	ConfigUsePeerIP                     = "NZ::Use-Peer-IP"
+	JWTSecretKeyRotationBaselineVersion = "v2.0.13"
+)
+
+const (
+	ConfigCoverAll = iota + 1
 	ConfigCoverIgnoreAll
 )
 
@@ -60,9 +65,10 @@ type Config struct {
 	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
 	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
 
-	JWTSecretKey string `koanf:"jwt_secret_key" json:"jwt_secret_key,omitempty"`
-	ListenPort   uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
-	ListenHost   string `koanf:"listen_host" json:"listen_host,omitempty"`
+	JWTSecretKey                   string `koanf:"jwt_secret_key" json:"jwt_secret_key,omitempty"`
+	JWTSecretKeyLastRotatedVersion string `koanf:"jwt_secret_key_last_rotated_version" json:"jwt_secret_key_last_rotated_version,omitempty"`
+	ListenPort                     uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
+	ListenHost                     string `koanf:"listen_host" json:"listen_host,omitempty"`
 
 	// oauth2 配置
 	Oauth2 map[string]*Oauth2Config `koanf:"oauth2" json:"oauth2,omitempty"`
@@ -193,6 +199,30 @@ func (c *Config) Save() error {
 	return c.save()
 }
 
+func (c *Config) RotateJWTSecretKeyIfNeeded(currentVersion string) (bool, error) {
+	currentVersion = strings.TrimSpace(currentVersion)
+	if compareVersion(currentVersion, JWTSecretKeyRotationBaselineVersion) < 0 {
+		return false, nil
+	}
+
+	initialMarker := c.JWTSecretKeyLastRotatedVersion
+	shouldRotate := c.JWTSecretKeyLastRotatedVersion == "" || compareVersion(c.JWTSecretKeyLastRotatedVersion, JWTSecretKeyRotationBaselineVersion) < 0
+	if shouldRotate {
+		secret, err := utils.GenerateRandomString(1024)
+		if err != nil {
+			return false, err
+		}
+		c.JWTSecretKey = secret
+	}
+
+	c.JWTSecretKeyLastRotatedVersion = currentVersion
+
+	if !shouldRotate && c.JWTSecretKeyLastRotatedVersion == initialMarker {
+		return false, nil
+	}
+	return shouldRotate, c.Save()
+}
+
 func (c *Config) save() error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
@@ -209,6 +239,40 @@ func (c *Config) write(data []byte) error {
 	}
 
 	return os.WriteFile(c.filePath, data, 0600)
+}
+
+func compareVersion(left, right string) int {
+	leftParts, leftOK := parseVersion(left)
+	rightParts, rightOK := parseVersion(right)
+	if !leftOK || !rightOK {
+		return -1
+	}
+	for i := range leftParts {
+		if leftParts[i] < rightParts[i] {
+			return -1
+		}
+		if leftParts[i] > rightParts[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseVersion(version string) ([3]int, bool) {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return [3]int{}, false
+	}
+	var parsed [3]int
+	for i, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return [3]int{}, false
+		}
+		parsed[i] = value
+	}
+	return parsed, true
 }
 
 func koanfConf(c any) koanf.UnmarshalConf {

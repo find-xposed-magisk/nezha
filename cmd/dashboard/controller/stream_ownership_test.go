@@ -141,6 +141,39 @@ func TestJWTInitParamsPinsAlgorithmAndSameSite(t *testing.T) {
 	}
 }
 
+// MEDIUM security: an IOStream session created by the old owner (terminal,
+// file-manager, NAT) must be torn down when the server's ownership rotates
+// — Register on Initiate, revertTransition on Cancel/Fail/Timeout, and
+// OnServersDeleted on delete. Otherwise the old owner keeps an open
+// websocket attached to a server they no longer own, which is effectively
+// post-transfer RCE / file-read.
+func TestServerTransferTransitionRevokesActiveIOStreams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ensureLocalizerForStreamTests(t)
+	rpc.NezhaHandlerSingleton = rpc.NewNezhaHandler()
+	originalHook := singleton.ServerTransferStreamRevocationHook
+	singleton.ServerTransferStreamRevocationHook = rpc.NezhaHandlerSingleton.RevokeStreamsForServer
+	defer func() {
+		singleton.ServerTransferStreamRevocationHook = originalHook
+	}()
+
+	rpc.NezhaHandlerSingleton.CreateStream("term-server-1", 100, 1)
+	rpc.NezhaHandlerSingleton.CreateStream("fm-server-1", 100, 1)
+	rpc.NezhaHandlerSingleton.CreateStream("term-server-2", 100, 2)
+
+	singleton.ServerTransferRevokeStreamsForServer(1)
+
+	if _, exists := rpc.NezhaHandlerSingleton.StreamOwnership("term-server-1"); exists {
+		t.Fatal("terminal stream for transferred server 1 must be revoked on ownership rotation")
+	}
+	if _, exists := rpc.NezhaHandlerSingleton.StreamOwnership("fm-server-1"); exists {
+		t.Fatal("file-manager stream for transferred server 1 must be revoked on ownership rotation")
+	}
+	if _, exists := rpc.NezhaHandlerSingleton.StreamOwnership("term-server-2"); !exists {
+		t.Fatal("unrelated server's stream must NOT be revoked")
+	}
+}
+
 // nz-o2s carries the OAuth2 state binding that authenticates the callback.
 // The frontend never reads it, so HttpOnly is safe to enable and shuts the
 // door on XSS attempting to steal the state.

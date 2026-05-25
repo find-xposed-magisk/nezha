@@ -26,6 +26,10 @@ const (
 	TaskTypeFM
 	TaskTypeReportConfig
 	TaskTypeApplyConfig
+	// TaskTypeServerTransferApply: per-transfer credential rotation.
+	// Pre-transfer agents do not recognise this type — dashboard MUST gate
+	// transfers on agent capability before pushing.
+	TaskTypeServerTransferApply
 )
 
 type TerminalTask struct {
@@ -133,7 +137,8 @@ func IsServiceSentinelNeeded(t uint64) bool {
 	switch t {
 	case TaskTypeCommand, TaskTypeTerminalGRPC, TaskTypeUpgrade,
 		TaskTypeKeepalive, TaskTypeNAT, TaskTypeFM,
-		TaskTypeReportConfig, TaskTypeApplyConfig:
+		TaskTypeReportConfig, TaskTypeApplyConfig,
+		TaskTypeServerTransferApply:
 		return false
 	default:
 		return true

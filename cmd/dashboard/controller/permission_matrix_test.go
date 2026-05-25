@@ -478,6 +478,21 @@ func TestBatchMoveServerAllowsAdminCrossUser(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestBatchMoveServerMasksForeignServerIDsForMembers(t *testing.T) {
+	ctx := newMemberValidationContext(t)
+	assert.NoError(t, singleton.DB.Create(&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "foreign", UUID: "foreign-server"}).Error)
+	singleton.ServerShared = singleton.NewServerClass()
+
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/batch-move/server", strings.NewReader(`{"ids":[1,9999],"to_user":200}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	got, err := batchMoveServer(ctx)
+
+	assert.NoError(t, err)
+	assert.Len(t, got, 2)
+	assert.Equal(t, model.BatchMoveServerResultServerNotFound, got[0].Status)
+	assert.Equal(t, model.BatchMoveServerResultServerNotFound, got[1].Status)
+}
+
 func TestNATRejectsUnknownServerID(t *testing.T) {
 	ctx := newMemberValidationContext(t)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/nat", strings.NewReader(`{"name":"x","domain":"x.example","host":"127.0.0.1:80","server_id":9999}`))
