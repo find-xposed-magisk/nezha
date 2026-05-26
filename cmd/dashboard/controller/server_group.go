@@ -58,6 +58,9 @@ func listServerGroup(c *gin.Context) ([]*model.ServerGroupResponseItem, error) {
 		if isMember && !isAdmin && !s.HasPermission(c) {
 			continue
 		}
+		if !isMember && len(groupServers[s.ID]) == 0 {
+			continue
+		}
 		sgRes = append(sgRes, &model.ServerGroupResponseItem{
 			Group:   s,
 			Servers: groupServers[s.ID],
