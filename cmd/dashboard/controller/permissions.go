@@ -35,6 +35,22 @@ func userCanViewServer(c *gin.Context, server *model.Server) bool {
 	return !server.HideForGuest
 }
 
+func userCanViewService(c *gin.Context, service *model.Service) bool {
+	if service == nil {
+		return false
+	}
+	if service.EnableShowInService {
+		return true
+	}
+	if callerIsAdmin(c) {
+		return true
+	}
+	if _, isMember := c.Get(model.CtxKeyAuthorizedUser); isMember {
+		return service.HasPermission(c)
+	}
+	return false
+}
+
 func assertOwnsNotificationGroup(c *gin.Context, groupID uint64) error {
 	if groupID == 0 {
 		return nil
