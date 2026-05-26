@@ -24,7 +24,7 @@ import (
 // @Param id query uint true "Server ID"
 // @Produce json
 // @Success 200 {object} model.CreateFMResponse
-// @Router /file [get]
+// @Router /file [post]
 func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 	idStr := c.Query("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
