@@ -166,7 +166,7 @@ func updateCron(c *gin.Context) (any, error) {
 // @param id path uint true "Task ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[any]
-// @Router /cron/{id}/manual [get]
+// @Router /cron/{id}/manual [post]
 func manualTriggerCron(c *gin.Context) (any, error) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
