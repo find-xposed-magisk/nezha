@@ -135,7 +135,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/cron", listHandler(listCron))
 	auth.POST("/cron", commonHandler(createCron))
 	auth.PATCH("/cron/:id", commonHandler(updateCron))
-	auth.GET("/cron/:id/manual", commonHandler(manualTriggerCron))
+	auth.POST("/cron/:id/manual", commonHandler(manualTriggerCron))
 	auth.POST("/batch-delete/cron", commonHandler(batchDeleteCron))
 
 	auth.GET("/ddns", listHandler(listDDNS))
