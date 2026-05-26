@@ -21,7 +21,7 @@ import (
 // signing key. When set, the dashboard never writes the key to disk and the
 // version-driven rotation in RotateJWTSecretKeyIfNeeded is skipped so that
 // rotation is fully controlled by the operator / KMS.
-const JWTSecretEnvKey = "NZ_JWTSECRETKEY"
+const JWTSecretEnvKey = "NZ_JWTSECRETKEY" // #nosec G101 -- environment variable name, not a hardcoded secret value.
 
 const (
 	ConfigUsePeerIP                     = "NZ::Use-Peer-IP"
