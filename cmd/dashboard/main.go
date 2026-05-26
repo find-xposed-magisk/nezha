@@ -24,15 +24,16 @@ import (
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/cmd/dashboard/rpc"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/idcodec"
 	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
 type DashboardCliParam struct {
-	Version          bool   // 当前版本号
-	ConfigFile       string // 配置文件路径
-	DatabaseLocation string // Sqlite3 数据库文件路径
+	Version          bool
+	ConfigFile       string
+	DatabaseLocation string
 }
 
 var (
@@ -42,7 +43,6 @@ var (
 )
 
 func initSystem(bus chan<- *model.Service) error {
-	// 初始化管理员账户
 	var usersCount int64
 	if err := singleton.DB.Model(&model.User{}).Count(&usersCount).Error; err != nil {
 		return err
@@ -61,21 +61,26 @@ func initSystem(bus chan<- *model.Service) error {
 		}
 	}
 
-	// 启动 singleton 包下的所有服务
 	if err := singleton.LoadSingleton(bus); err != nil {
 		return err
 	}
 
-	// 每天的3:30 对流量记录进行清理
 	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanMonitorHistory); err != nil {
 		return err
 	}
 
-	// 每小时对流量记录进行打点
 	if _, err := singleton.CronShared.AddFunc("0 0 * * * *", func() { singleton.RecordTransferHourlyUsage() }); err != nil {
 		return err
 	}
+
+	if err := singleton.StartJWTSessionGC(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func initIDCodec() error {
+	return idcodec.Init([]byte(singleton.Conf.JWTSecretKey))
 }
 
 // @title           Nezha Monitoring API
@@ -113,6 +118,7 @@ func main() {
 	serviceSentinelDispatchBus := make(chan *model.Service)
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
+		initIDCodec,
 		singleton.InitTimezoneAndCache,
 		func() error {
 			if singleton.Conf.Memory.GoMemLimitMB > 0 {
