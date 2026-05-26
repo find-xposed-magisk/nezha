@@ -1,6 +1,7 @@
 package model
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,12 @@ import (
 
 	"github.com/nezhahq/nezha/pkg/utils"
 )
+
+// JWTSecretEnvKey is the canonical environment variable that injects the JWT
+// signing key. When set, the dashboard never writes the key to disk and the
+// version-driven rotation in RotateJWTSecretKeyIfNeeded is skipped so that
+// rotation is fully controlled by the operator / KMS.
+const JWTSecretEnvKey = "NZ_JWTSECRETKEY"
 
 const (
 	ConfigUsePeerIP                     = "NZ::Use-Peer-IP"
@@ -65,10 +72,13 @@ type Config struct {
 	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
 	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
 
-	JWTSecretKey                   string `koanf:"jwt_secret_key" json:"jwt_secret_key,omitempty"`
+	JWTSecretKey                   string `koanf:"jwt_secret_key" json:"-" yaml:"-"`
 	JWTSecretKeyLastRotatedVersion string `koanf:"jwt_secret_key_last_rotated_version" json:"jwt_secret_key_last_rotated_version,omitempty"`
 	ListenPort                     uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
 	ListenHost                     string `koanf:"listen_host" json:"listen_host,omitempty"`
+
+	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
+	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 
 	// oauth2 配置
 	Oauth2 map[string]*Oauth2Config `koanf:"oauth2" json:"oauth2,omitempty"`
@@ -166,12 +176,23 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	if c.Cover == 0 {
 		c.Cover = 1
 	}
+	if envSecret := os.Getenv(JWTSecretEnvKey); envSecret != "" {
+		c.JWTSecretKey = envSecret
+		c.jwtSecretFromEnv = true
+	} else if c.JWTSecretKey != "" {
+		c.jwtSecretFromYAML = true
+		log.Printf("NEZHA>> jwt_secret_key loaded from config.yaml; recommend injecting via env %s to keep it off disk", JWTSecretEnvKey)
+	}
+
 	if c.JWTSecretKey == "" {
-		c.JWTSecretKey, err = utils.GenerateRandomString(1024)
+		generated, err := utils.GenerateRandomString(1024)
 		if err != nil {
 			return err
 		}
-		if err = c.Save(); err != nil {
+		c.JWTSecretKey = generated
+		c.jwtSecretFromYAML = true
+		log.Printf("NEZHA>> generated new jwt_secret_key; wrote to config.yaml. For production, inject via env %s and remove the field from config.yaml.", JWTSecretEnvKey)
+		if err := c.patchYAMLField("jwt_secret_key", generated); err != nil {
 			return err
 		}
 	}
@@ -200,6 +221,10 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) RotateJWTSecretKeyIfNeeded(currentVersion string) (bool, error) {
+	if c.jwtSecretFromEnv {
+		return false, nil
+	}
+
 	currentVersion = strings.TrimSpace(currentVersion)
 	if compareVersion(currentVersion, JWTSecretKeyRotationBaselineVersion) < 0 {
 		return false, nil
@@ -220,7 +245,40 @@ func (c *Config) RotateJWTSecretKeyIfNeeded(currentVersion string) (bool, error)
 	if !shouldRotate && c.JWTSecretKeyLastRotatedVersion == initialMarker {
 		return false, nil
 	}
-	return shouldRotate, c.Save()
+	if shouldRotate {
+		if err := c.patchYAMLField("jwt_secret_key", c.JWTSecretKey); err != nil {
+			return false, err
+		}
+	}
+	if err := c.patchYAMLField("jwt_secret_key_last_rotated_version", c.JWTSecretKeyLastRotatedVersion); err != nil {
+		return false, err
+	}
+	return shouldRotate, nil
+}
+
+func (c *Config) patchYAMLField(key string, value any) error {
+	dir := filepath.Dir(c.filePath)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return err
+	}
+
+	raw := map[string]any{}
+	if data, err := os.ReadFile(c.filePath); err == nil {
+		if len(data) > 0 {
+			if err := yaml.Unmarshal(data, &raw); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	raw[key] = value
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.filePath, out, 0600)
 }
 
 func (c *Config) save() error {
