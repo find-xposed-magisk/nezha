@@ -84,7 +84,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/terminal", commonHandler(createTerminal))
 	auth.GET("/ws/terminal/:id", commonHandler(terminalStream))
 
-	auth.GET("/file", commonHandler(createFM))
+	auth.POST("/file", commonHandler(createFM))
 	auth.GET("/ws/file/:id", commonHandler(fmStream))
 
 	auth.GET("/profile", commonHandler(getProfile))
