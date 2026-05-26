@@ -85,11 +85,15 @@ func updateProfile(c *gin.Context) (any, error) {
 	user.Username = pf.NewUsername
 	user.Password = string(hash)
 	user.RejectPassword = pf.RejectPassword
+	user.TokenVersion += 1
 	if err := singleton.DB.Save(&user).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 
 	singleton.OnUserUpdate(&user)
+	if err := singleton.RevokeJWTSessionsByUser(user.ID); err != nil {
+		return nil, newGormError("%v", err)
+	}
 	return nil, nil
 }
 
