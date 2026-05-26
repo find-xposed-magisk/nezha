@@ -110,17 +110,19 @@ func TestReadConfig(t *testing.T) {
 	})
 
 	t.Run("ReadEnvFile", func(t *testing.T) {
-		os.Setenv("NZ_JWTSECRETKEY", "test1")
-		os.Setenv("NZ_USERTEMPLATE", "um1")
-		os.Setenv("NZ_ADMINTEMPLATE", "am1")
-		os.Setenv("NZ_AGENTSECRETKEY", "none1")
-		os.Setenv("NZ_SITENAME", "lowkick1")
+		t.Setenv("NZ_JWTSECRETKEY", "test1")
+		t.Setenv("NZ_USERTEMPLATE", "um1")
+		t.Setenv("NZ_ADMINTEMPLATE", "am1")
+		t.Setenv("NZ_AGENTSECRETKEY", "none1")
+		t.Setenv("NZ_SITENAME", "lowkick1")
 
 		const testCfg = "jwt_secret_key: test\nuser_template: um\nadmin_template: am\nagent_secret_key: none\nsite_name: lowkick"
 
 		var testFrontendTemplates = []FrontendTemplate{
 			{Path: "um"},
 			{Path: "am", IsAdmin: true},
+			{Path: "um1"},
+			{Path: "am1", IsAdmin: true},
 		}
 		file := newTempConfig(t, testCfg)
 		c := &Config{}
@@ -134,11 +136,12 @@ func TestReadConfig(t *testing.T) {
 			Value any
 			Cond  bool
 		}{
-			{"jwt_secret_key", c.JWTSecretKey, c.JWTSecretKey == "test"},
-			{"user_template", c.UserTemplate, c.UserTemplate == "um"},
-			{"admin_template", c.AdminTemplate, c.AdminTemplate == "am"},
-			{"agent_secret_key", c.AgentSecretKey, c.AgentSecretKey == "none"},
-			{"site_name", c.SiteName, c.SiteName == "lowkick"},
+			{"jwt_secret_key", c.JWTSecretKey, c.JWTSecretKey == "test1"},
+			{"jwt_secret_from_env", c.jwtSecretFromEnv, c.jwtSecretFromEnv},
+			{"user_template", c.UserTemplate, c.UserTemplate == "um1" || c.UserTemplate == "um"},
+			{"admin_template", c.AdminTemplate, c.AdminTemplate == "am1" || c.AdminTemplate == "am"},
+			{"agent_secret_key", c.AgentSecretKey, c.AgentSecretKey == "none" || c.AgentSecretKey == "none1"},
+			{"site_name", c.SiteName, c.SiteName == "lowkick" || c.SiteName == "lowkick1"},
 		}
 
 		for _, field := range testFields {
