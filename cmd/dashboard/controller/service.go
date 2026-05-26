@@ -130,9 +130,8 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 		return nil, err
 	}
 
-	// 检查服务是否存在
 	service, ok := singleton.ServiceSentinelShared.Get(serviceID)
-	if !ok || service == nil {
+	if !ok || service == nil || !userCanViewService(c, service) {
 		return nil, singleton.Localizer.ErrorT("service not found")
 	}
 
@@ -285,7 +284,13 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
 	}
 
-	services := singleton.ServiceSentinelShared.GetSortedList()
+	allServices := singleton.ServiceSentinelShared.GetSortedList()
+	services := make([]*model.Service, 0, len(allServices))
+	for _, s := range allServices {
+		if userCanViewService(c, s) {
+			services = append(services, s)
+		}
+	}
 
 	var result []*model.ServiceInfos
 
