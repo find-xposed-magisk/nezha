@@ -201,6 +201,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 		}
 
 		jwtConfig.SetCookie(c, tokenString)
+		setCSRFCookie(c)
 		c.Redirect(http.StatusFound, utils.IfOr(state.Action == model.RTypeBind, "/dashboard/profile?oauth2=true", "/dashboard/login?oauth2=true"))
 
 		return nil, errNoop

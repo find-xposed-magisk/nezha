@@ -38,7 +38,37 @@ func NewServerClass() *ServerClass {
 	}
 	sc.sortList()
 
+	model.OwnerServerIDsLookup = sc.ownerServerIDs
+	model.AllServerIDsLookup = sc.allServerIDs
+	model.OwnerIsAdminLookup = ownerIsAdmin
+
 	return sc
+}
+
+func (c *ServerClass) ownerServerIDs(ownerUID uint64) []uint64 {
+	var ids []uint64
+	c.Range(func(id uint64, s *model.Server) bool {
+		if s != nil && s.GetUserID() == ownerUID {
+			ids = append(ids, id)
+		}
+		return true
+	})
+	return ids
+}
+
+func (c *ServerClass) allServerIDs() []uint64 {
+	var ids []uint64
+	c.Range(func(id uint64, s *model.Server) bool {
+		if s != nil {
+			ids = append(ids, id)
+		}
+		return true
+	})
+	return ids
+}
+
+func ownerIsAdmin(ownerUID uint64) bool {
+	return userIsAdmin(ownerUID)
 }
 
 func (c *ServerClass) Update(s *model.Server, uuid string) {
@@ -64,8 +94,11 @@ func (c *ServerClass) Delete(idList []uint64) {
 	c.listMu.Lock()
 
 	for _, id := range idList {
-		serverUUID := c.list[id].UUID
-		delete(c.uuidToID, serverUUID)
+		s, ok := c.list[id]
+		if !ok {
+			continue
+		}
+		delete(c.uuidToID, s.UUID)
 		delete(c.list, id)
 	}
 

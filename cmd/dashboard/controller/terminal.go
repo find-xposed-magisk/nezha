@@ -34,8 +34,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	if server == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}
-	stream := server.GetTaskStream()
-	if stream == nil {
+	if server.GetTaskStream() == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}
 
@@ -53,7 +52,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,
 	})
-	if err := stream.Send(&proto.Task{
+	if err := server.SendTask(&proto.Task{
 		Type: model.TaskTypeTerminalGRPC,
 		Data: string(terminalData),
 	}); err != nil {
@@ -80,7 +79,7 @@ func terminalStream(c *gin.Context) (any, error) {
 	// (or an admin). Without this, any authenticated user who learns a stream
 	// UUID — via Referer leak, access logs, browser history — can hijack a live
 	// terminal and gain shell access to the target server.
-	if !rpc.NezhaHandlerSingleton.IsStreamAuthorizedForUser(streamId, getUid(c), callerIsAdmin(c)) {
+	if !streamAttachAllowedForRequest(c, streamId) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 	if _, err := rpc.NezhaHandlerSingleton.GetStream(streamId); err != nil {
@@ -94,6 +93,9 @@ func terminalStream(c *gin.Context) (any, error) {
 	}
 	defer wsConn.Close()
 	conn := websocketx.NewConn(wsConn)
+
+	deregisterPAT := registerPATConnection(c, func() { _ = wsConn.Close() })
+	defer deregisterPAT()
 
 	go func() {
 		// PING 保活

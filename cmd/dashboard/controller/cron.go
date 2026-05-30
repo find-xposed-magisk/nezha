@@ -50,8 +50,16 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	if !singleton.ServerShared.CheckPermission(c, slices.Values(cf.Servers)) {
+	if !isValidCronCover(cf.Cover) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if err := checkCronServerListPermission(c, cf.Cover, cf.Servers, getUid(c)); err != nil {
+		return 0, err
+	}
+
+	if err := rejectImplicitCoverForLimitedPAT(c, cf.Cover, cf.Servers); err != nil {
+		return 0, err
 	}
 
 	if err := assertOwnsNotificationGroup(c, cf.NotificationGroupID); err != nil {
@@ -111,12 +119,8 @@ func updateCron(c *gin.Context) (any, error) {
 		return 0, err
 	}
 
-	if !singleton.ServerShared.CheckPermission(c, slices.Values(cf.Servers)) {
-		return 0, singleton.Localizer.ErrorT("permission denied")
-	}
-
-	if err := assertOwnsNotificationGroup(c, cf.NotificationGroupID); err != nil {
-		return nil, err
+	if !isValidCronCover(cf.Cover) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	var cr model.Cron
@@ -126,6 +130,18 @@ func updateCron(c *gin.Context) (any, error) {
 
 	if !cr.HasPermission(c) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if err := checkCronServerListPermission(c, cf.Cover, cf.Servers, cr.GetUserID()); err != nil {
+		return nil, err
+	}
+
+	if err := rejectImplicitCoverForLimitedPATWithOwner(c, cf.Cover, cf.Servers, cr.GetUserID()); err != nil {
+		return nil, err
+	}
+
+	if err := assertOwnsNotificationGroup(c, cf.NotificationGroupID); err != nil {
+		return nil, err
 	}
 
 	cr.TaskType = cf.TaskType
@@ -183,6 +199,14 @@ func manualTriggerCron(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// 运行时回放写侧 rejectImplicitCoverForLimitedPAT* 同一条 PAT 收口：
+	// 历史脏数据 / 旁路写入的 cron 仍可能携带「CronCoverAll + 不充分 deny-list」
+	// 的配置；CronTrigger 没有 PAT 上下文，manualTrigger 这里是唯一阻止
+	// 受限 PAT 触发 fan-out 到白名单外 owner servers 的同步入口。
+	if err := enforcePATCronDispatchScope(c, cr); err != nil {
+		return nil, err
+	}
+
 	singleton.ManualTrigger(cr)
 	return nil, nil
 }
@@ -206,6 +230,19 @@ func batchDeleteCron(c *gin.Context) (any, error) {
 
 	if !singleton.CronShared.CheckPermission(c, slices.Values(cr)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	// 与 manualTriggerCron 对称：删除会改变 fan-out 范围本身，受限 PAT 不
+	// 应通过删除一个白名单内的「掩护」cron 间接放大对白名单外 owner servers
+	// 的影响。回放同一条 cover-fanout 收口。
+	for _, id := range cr {
+		existing, ok := singleton.CronShared.Get(id)
+		if !ok || existing == nil {
+			continue
+		}
+		if err := enforcePATCronDispatchScope(c, existing); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := singleton.DB.Unscoped().Delete(&model.Cron{}, "id in (?)", cr).Error; err != nil {

@@ -37,6 +37,32 @@ func NewNezhaHandler() *NezhaHandler {
 	}
 }
 
+// attachRequestTaskStream resolves the server for clientID and publishes the
+// task stream. It mirrors the !ok || server == nil guard the other RPC entry
+// points use: the server can be deleted between CheckRequestTask and this
+// lookup, in which case Get returns a nil *Server and SetTaskStream would
+// panic.
+func attachRequestTaskStream(clientID uint64, stream pb.NezhaService_RequestTaskServer) (*model.Server, bool) {
+	server, ok := singleton.ServerShared.Get(clientID)
+	if !ok || server == nil {
+		return nil, false
+	}
+	server.SetTaskStream(stream)
+	return server, true
+}
+
+// clearRequestTaskStream detaches the dropped stream from whichever *Server is
+// currently published for clientID. Edit and transfer rotation publish a new
+// *Server that adopts the same stream holder, so cleanup must target the live
+// map entry; the captured server is only the fallback for a removed entry.
+func clearRequestTaskStream(clientID uint64, captured *model.Server, stream pb.NezhaService_RequestTaskServer) {
+	if current, ok := singleton.ServerShared.Get(clientID); ok && current != nil {
+		current.ClearTaskStreamIfCurrent(stream)
+		return
+	}
+	captured.ClearTaskStreamIfCurrent(stream)
+}
+
 func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) error {
 	var clientID uint64
 	var err error
@@ -44,9 +70,11 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		return err
 	}
 
-	server, _ := singleton.ServerShared.Get(clientID)
-	server.SetTaskStream(stream)
-	defer server.ClearTaskStreamIfCurrent(stream)
+	server, ok := attachRequestTaskStream(clientID, stream)
+	if !ok {
+		return nil
+	}
+	defer clearRequestTaskStream(clientID, server, stream)
 	// If a transfer is mid-flight for this server, the agent has just brought
 	// up a fresh bidi stream — this is the moment to (re)deliver the
 	// ApplyConfig task carrying the new owner's AgentSecret. Pushes from
@@ -114,6 +142,10 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 				log.Printf("NEZHA>> ServerTransfer MarkFailed(%d) failed: %v", result.GetId(), err)
 			}
 		default:
+			if model.IsMCPRPCResult(result.GetType()) {
+				deliverMCPResultFromReporter(result, clientID)
+				continue
+			}
 			if model.IsServiceSentinelNeeded(result.GetType()) {
 				singleton.ServiceSentinelShared.Dispatch(singleton.ReportData{
 					Data:     result,
@@ -265,24 +297,45 @@ func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
 		return fmt.Errorf("stream not authorized for agent")
 	}
 
-	go func() {
-		for {
-			if err := stream.Send(&pb.IOStreamData{Data: []byte{}}); err != nil {
-				log.Printf("NEZHA>> IOStream keepAlive error: %v\n", err)
-				return
-			}
-			time.Sleep(time.Second * 30)
-		}
-	}()
-
 	if _, err := s.GetStream(streamId); err != nil {
 		return err
 	}
 	iw := grpcx.NewIOStreamWrapper(stream)
+
+	// Keepalive MUST go through the wrapper so it shares the same sendMu as
+	// MCP fs.transfer / terminal / fm Writers. Calling stream.Send directly
+	// here used to race those Writers — grpc-go forbids concurrent SendMsg
+	// on the same stream. The wrapper's sendMu is the dashboard-side dual
+	// of agent/cmd/agent/mcp_fs_transfer.go's serialIOStreamSender.
+	keepaliveDone := make(chan struct{})
+	go func() {
+		defer close(keepaliveDone)
+		ticker := time.NewTicker(time.Second * 30)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-iw.Context().Done():
+				return
+			case <-iw.Done():
+				// 业务侧（CloseStream / RevokeStreamsForPurpose）调过
+				// iw.Close()。即便底层 gRPC stream context 尚未取消，也
+				// 必须立刻收手——否则要再等一整个 30s tick，handler 在
+				// iw.Wait() 之后又得多等一拍 keepaliveDone 才能返回。
+				return
+			case <-ticker.C:
+				if err := iw.SendKeepalive(); err != nil {
+					log.Printf("NEZHA>> IOStream keepAlive error: %v\n", err)
+					return
+				}
+			}
+		}
+	}()
+
 	if err := s.AgentConnected(streamId, iw); err != nil {
 		return err
 	}
 	iw.Wait()
+	<-keepaliveDone
 	return nil
 }
 

@@ -21,8 +21,9 @@ import (
 // List server
 // @Summary List server
 // @Security BearerAuth
+// @Security APITokenAuth
 // @Schemes
-// @Description List server
+// @Description List server. PAT scope required: nezha:server:read.
 // @Tags auth required
 // @Param id query uint false "Resource ID"
 // @Produce json
@@ -196,11 +197,15 @@ func forceUpdateServer(c *gin.Context) (*model.ServerTaskResponse, error) {
 			forceUpdateResp.Offline = append(forceUpdateResp.Offline, sid)
 			continue
 		}
-		if stream := server.GetTaskStream(); stream != nil {
-			if err := stream.Send(&pb.Task{
+		if server.GetTaskStream() != nil {
+			if err := server.SendTask(&pb.Task{
 				Type: model.TaskTypeUpgrade,
 			}); err != nil {
-				forceUpdateResp.Failure = append(forceUpdateResp.Failure, sid)
+				if errors.Is(err, model.ErrTaskStreamOffline) {
+					forceUpdateResp.Offline = append(forceUpdateResp.Offline, sid)
+				} else {
+					forceUpdateResp.Failure = append(forceUpdateResp.Failure, sid)
+				}
 			} else {
 				forceUpdateResp.Success = append(forceUpdateResp.Success, sid)
 			}
@@ -232,18 +237,19 @@ func getServerConfig(c *gin.Context) (string, error) {
 	if !ok {
 		return "", nil
 	}
-	stream := s.GetTaskStream()
-	if stream == nil {
-		return "", nil
-	}
-
 	if !s.HasPermission(c) {
 		return "", singleton.Localizer.ErrorT("permission denied")
 	}
+	if s.GetTaskStream() == nil {
+		return "", nil
+	}
 
-	if err := stream.Send(&pb.Task{
+	if err := s.SendTask(&pb.Task{
 		Type: model.TaskTypeReportConfig,
 	}); err != nil {
+		if errors.Is(err, model.ErrTaskStreamOffline) {
+			return "", nil
+		}
 		return "", err
 	}
 
@@ -308,21 +314,23 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 		go func(srvGroup []*model.Server) {
 			defer wg.Done()
 			for _, s := range srvGroup {
-				// Create and send the task.
 				task := &pb.Task{
 					Type: model.TaskTypeApplyConfig,
 					Data: configForm.Config,
 				}
-				stream := s.GetTaskStream()
-				if stream == nil {
+				if s.GetTaskStream() == nil {
 					respMu.Lock()
 					resp.Offline = append(resp.Offline, s.ID)
 					respMu.Unlock()
 					continue
 				}
-				if err := stream.Send(task); err != nil {
+				if err := s.SendTask(task); err != nil {
 					respMu.Lock()
-					resp.Failure = append(resp.Failure, s.ID)
+					if errors.Is(err, model.ErrTaskStreamOffline) {
+						resp.Offline = append(resp.Offline, s.ID)
+					} else {
+						resp.Failure = append(resp.Failure, s.ID)
+					}
 					respMu.Unlock()
 					continue
 				}
@@ -388,6 +396,17 @@ func batchMoveServer(c *gin.Context) ([]model.BatchMoveServerResult, error) {
 
 		srv, ok := singleton.ServerShared.Get(sid)
 		if !ok || srv == nil {
+			res.Status = model.BatchMoveServerResultServerNotFound
+			results = append(results, res)
+			continue
+		}
+
+		// PAT server_ids 白名单优先于 admin/owner 早返回：admin 给自己签发的
+		// 限定 server_ids PAT 必须只能 move 白名单内 server。前面的 admin/owner
+		// 检查只看 currentOwner，不会触达白名单，这里显式补一道。返回
+		// ServerNotFound 与未知/外部 server 的语义对齐，避免泄露白名单外
+		// server 是否存在。
+		if !patAllowsServer(c, sid) {
 			res.Status = model.BatchMoveServerResultServerNotFound
 			results = append(results, res)
 			continue

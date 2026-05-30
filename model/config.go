@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-viper/mapstructure/v2"
 	kmaps "github.com/knadh/koanf/maps"
@@ -51,6 +52,8 @@ type ConfigDashboard struct {
 
 	EnablePlainIPInNotification bool `koanf:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
 
+	EnableMCP bool `koanf:"enable_mcp" json:"enable_mcp,omitempty"` // 是否启用 MCP 入口（默认关闭；启用前请审视 PAT scope/whitelist）
+
 	// IP变更提醒
 	EnableIPChangeNotification  bool   `koanf:"enable_ip_change_notification" json:"enable_ip_change_notification,omitempty"`
 	IPChangeNotificationGroupID uint64 `koanf:"ip_change_notification_group_id" json:"ip_change_notification_group_id"`
@@ -79,6 +82,11 @@ type Config struct {
 
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
+
+	// mcpEnabled：EnableMCP 的并发安全镜像，kill switch 跨 goroutine 读写走
+	// MCPEnabled()/SetMCPEnabled()。放外层 Config 而非 ConfigDashboard，避免
+	// SettingResponse 按值拷贝 ConfigDashboard 触发 copylocks。
+	mcpEnabled atomic.Bool `koanf:"-" json:"-" yaml:"-"`
 
 	// oauth2 配置
 	Oauth2 map[string]*Oauth2Config `koanf:"oauth2" json:"oauth2,omitempty"`
@@ -212,7 +220,21 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		}
 	}
 
+	c.mcpEnabled.Store(c.EnableMCP)
+
 	return nil
+}
+
+// MCPEnabled 并发安全地读取 MCP kill switch 状态。
+func (c *Config) MCPEnabled() bool {
+	return c.mcpEnabled.Load()
+}
+
+// SetMCPEnabled 并发安全地更新 MCP kill switch 状态。只写 atomic 镜像，不直接
+// 写 EnableMCP 明文字段——后者会与 listConfig 的 *singleton.Conf 整体拷贝读发生
+// 数据竞争。持久化由 save() 在 marshal 前从 atomic 同步明文字段完成。
+func (c *Config) SetMCPEnabled(v bool) {
+	c.mcpEnabled.Store(v)
 }
 
 // Save 保存配置文件
@@ -282,6 +304,7 @@ func (c *Config) patchYAMLField(key string, value any) error {
 }
 
 func (c *Config) save() error {
+	c.EnableMCP = c.mcpEnabled.Load()
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err

@@ -232,20 +232,6 @@ func NewServerTransferClass() *ServerTransferClass {
 		}
 		c.pending[t.ServerID] = &t
 	}
-	for i := range pending {
-		t := pending[i]
-		// Skip ghost rows whose server has been deleted out from under
-		// the transfer (e.g. before OnServersDeleted existed, or because
-		// the row predates this branch). Loading them would resurrect a
-		// HasPending state that no longer corresponds to a real server
-		// and the timeout sweeper would log errors every 30s without
-		// being able to settle the row.
-		if s, ok := ServerShared.Get(t.ServerID); !ok || s == nil {
-			log.Printf("NEZHA>> ServerTransferClass: ignoring pending transfer %d for missing server %d (likely a leftover from before OnServersDeleted was wired)", t.ID, t.ServerID)
-			continue
-		}
-		c.pending[t.ServerID] = &t
-	}
 
 	var reverted []model.ServerTransfer
 	// acked_at IS NULL is non-negotiable: MarkRevertDelivered persists
@@ -927,7 +913,14 @@ func (c *ServerTransferClass) sendApplyConfigTask(s *model.Server, stream pb.Nez
 	// Keep Send synchronous under the per-server lock. A goroutine+timeout cannot
 	// cancel grpc.ServerStream.Send; returning early would let a stale new-secret
 	// ApplyConfig complete after a cancel/fail revert and overwrite the rollback.
-	if err := stream.Send(task); err != nil {
+	//
+	// Route through Server.SendTask so the holder-scoped send mutex is
+	// honoured: cron / MCP CallAgent / MCP fs.transfer dispatch on the same
+	// gRPC stream and would otherwise race grpc-go's one-SendMsg-per-stream
+	// invariant. The captured stream argument is still passed to
+	// ClearTaskStreamIfCurrent so a reconnect mid-Send cannot wipe a newer
+	// published stream when Send fails on the stale one.
+	if err := s.SendTask(task); err != nil {
 		log.Printf("NEZHA>> ServerTransfer ApplyConfig send failed: serverID=%d transferID=%d: %v", s.ID, task.Id, err)
 		s.ClearTaskStreamIfCurrent(stream)
 		return err

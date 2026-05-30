@@ -264,13 +264,12 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				if !cronCanSendToServer(cr, s) {
 					return
 				}
-				stream := s.GetTaskStream()
-				if stream != nil {
+				if s.GetTaskStream() != nil {
 					cronShared := CronShared
 					if cronShared != nil {
 						cronShared.reserveAlertTriggerCronResult(cr.ID, s.ID)
 					}
-					if err := stream.Send(&pb.Task{
+					if err := s.SendTask(&pb.Task{
 						Id:   cr.ID,
 						Data: cr.Command,
 						Type: model.TaskTypeCommand,
@@ -287,7 +286,13 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 			return
 		}
 
-		for _, s := range ServerShared.Range {
+		// 先在锁内快照 server 列表再逐个 SendTask：ServerShared.Range 会在整个
+		// 回调期间持 listMu.RLock，而 SendTask 走阻塞 gRPC，一个卡死的 agent
+		// 会让需要写锁的 server 编辑/删除被拖死。GetList 克隆后即释放锁。
+		for _, s := range ServerShared.GetList() {
+			if s == nil {
+				continue
+			}
 			if !cronCanSendToServer(cr, s) {
 				continue
 			}
@@ -297,8 +302,8 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 			if cr.Cover == model.CronCoverIgnoreAll && !crIgnoreMap[s.ID] {
 				continue
 			}
-			if stream := s.GetTaskStream(); stream != nil {
-				stream.Send(&pb.Task{
+			if s.GetTaskStream() != nil {
+				_ = s.SendTask(&pb.Task{
 					Id:   cr.ID,
 					Data: cr.Command,
 					Type: model.TaskTypeCommand,

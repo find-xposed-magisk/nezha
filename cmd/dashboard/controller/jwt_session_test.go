@@ -244,3 +244,120 @@ func TestAuthenticatorPersistsCurrentTokenVersion(t *testing.T) {
 	assert.NotNil(t, identityHandler()(verify),
 		"the very next request with the freshly-issued token must authenticate")
 }
+
+func TestAuthenticator_BadPasswordReturnsFailedAuth(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	pw, err := bcrypt.GenerateFromPassword([]byte("correct horse"), bcrypt.MinCost)
+	require.NoError(t, err)
+	require.NoError(t, singleton.DB.Model(&model.User{}).
+		Where("id = ?", 100).
+		Update("password", string(pw)).Error)
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	body, _ := json.Marshal(model.LoginRequest{Username: "victim", Password: "wrong"})
+	ctx.Request = httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("User-Agent", "ua")
+	ctx.Set(model.CtxKeyRealIPStr, "1.2.3.4")
+
+	_, err = authenticator()(ctx)
+	require.Error(t, err, "wrong password must fail authentication")
+	require.Equal(t, jwt.ErrFailedAuthentication, err)
+
+	var w model.WAF
+	require.NoError(t, singleton.DB.Where("block_identifier = ?", int64(100)).First(&w).Error,
+		"bad password must increment WAF counter under user-specific BlockID")
+	require.GreaterOrEqual(t, w.Count, uint64(1))
+}
+
+func TestAuthenticator_UnknownUserReturnsFailedAuth(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	body, _ := json.Marshal(model.LoginRequest{Username: "ghost", Password: "anything"})
+	ctx.Request = httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(model.CtxKeyRealIPStr, "1.2.3.4")
+
+	_, err := authenticator()(ctx)
+	require.Error(t, err)
+	require.Equal(t, jwt.ErrFailedAuthentication, err)
+
+	var w model.WAF
+	require.NoError(t, singleton.DB.Where("block_identifier = ?", int64(model.BlockIDUnknownUser)).First(&w).Error,
+		"unknown user must increment WAF counter under BlockIDUnknownUser")
+}
+
+func TestAuthenticator_RejectPasswordUserRefused(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	pw, err := bcrypt.GenerateFromPassword([]byte("ok"), bcrypt.MinCost)
+	require.NoError(t, err)
+	require.NoError(t, singleton.DB.Model(&model.User{}).
+		Where("id = ?", 100).
+		Updates(map[string]any{"password": string(pw), "reject_password": true}).Error)
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	body, _ := json.Marshal(model.LoginRequest{Username: "victim", Password: "ok"})
+	ctx.Request = httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set(model.CtxKeyRealIPStr, "1.2.3.4")
+
+	_, err = authenticator()(ctx)
+	require.Equal(t, jwt.ErrFailedAuthentication, err,
+		"users with reject_password=true must not be able to log in via password even with correct one")
+}
+
+func TestIdentityHandler_ExpiredSessionRejected(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	user := model.User{Common: model.Common{ID: 100}, TokenVersion: 7}
+	claims, err := issueJWTSession(ctx, &user, 1)
+	require.NoError(t, err)
+	keyID := claims[jwtClaimKeyID].(string)
+
+	require.NoError(t, singleton.DB.Model(&model.JWTSession{}).
+		Where("key_id = ?", keyID).
+		Update("expires_at", time.Now().Add(-time.Hour)).Error)
+
+	verify := newCtxForUser(0, "1.2.3.4", "ua")
+	verify.Set("JWT_PAYLOAD", jwt.MapClaims{
+		jwtClaimUserID: claims[jwtClaimUserID],
+		jwtClaimKeyID:  claims[jwtClaimKeyID],
+	})
+
+	identity := identityHandler()(verify)
+	require.Nil(t, identity, "session whose expires_at is in the past must reject")
+}
+
+func TestRefreshResponse_UpdatesSessionExpires(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	user := model.User{Common: model.Common{ID: 100}, TokenVersion: 7}
+	claims, err := issueJWTSession(ctx, &user, 1)
+	require.NoError(t, err)
+	keyID := claims[jwtClaimKeyID].(string)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/v1/refresh-token", nil)
+	c.Set(jwtClaimKeyID, keyID)
+
+	newExpire := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	refreshResponse(c, 200, "fake-token", newExpire)
+
+	var sess model.JWTSession
+	require.NoError(t, singleton.DB.First(&sess, "key_id = ?", keyID).Error)
+	require.WithinDuration(t, newExpire, sess.ExpiresAt, time.Second,
+		"refreshResponse must extend the session's expires_at to the new expiry")
+	require.WithinDuration(t, time.Now(), sess.LastUsedAt, 5*time.Second,
+		"refreshResponse must touch last_used_at")
+}

@@ -1,24 +1,39 @@
 package rpc
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
+// StreamPurpose tags every IOStream with the feature that opened it so
+// admin actions can drop only the relevant subset. Existing call sites
+// (terminal / fm / NAT / server-transfer) keep PurposeLegacy and the
+// previous semantics; only the new MCP fs.transfer path uses
+// PurposeMCPTransfer, which is what EnableMCP=false revokes.
+type StreamPurpose uint8
+
+const (
+	PurposeLegacy StreamPurpose = iota
+	PurposeMCPTransfer
+)
+
 type ioStreamContext struct {
 	creatorUserID    uint64
 	targetServerID   uint64
+	purpose          StreamPurpose
 	userIo           io.ReadWriteCloser
 	agentIo          io.ReadWriteCloser
 	userIoConnectCh  chan struct{}
 	agentIoConnectCh chan struct{}
 	userIoChOnce     sync.Once
 	agentIoChOnce    sync.Once
+	revokedCh        chan struct{}
+	revokedOnce      sync.Once
 }
 
 type bp struct {
@@ -34,14 +49,20 @@ var bufPool = sync.Pool{
 }
 
 func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64, targetServerID uint64) {
+	s.CreateStreamWithPurpose(streamId, creatorUserID, targetServerID, PurposeLegacy)
+}
+
+func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID uint64, targetServerID uint64, purpose StreamPurpose) {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
 
 	s.ioStreams[streamId] = &ioStreamContext{
 		creatorUserID:    creatorUserID,
 		targetServerID:   targetServerID,
+		purpose:          purpose,
 		userIoConnectCh:  make(chan struct{}),
 		agentIoConnectCh: make(chan struct{}),
+		revokedCh:        make(chan struct{}),
 	}
 }
 
@@ -62,6 +83,42 @@ func (s *NezhaHandler) IsStreamAuthorizedForAgent(streamId string, agentServerID
 		return false
 	}
 	return ctx.targetServerID != 0 && ctx.targetServerID == agentServerID
+}
+
+// WaitForAgent 阻塞等待 agent 端通过 IOStream 接入并完成 AgentConnected。
+// dashboard 把 MCP 大文件传输的 task 派给 agent 后，需要等 agent dial 回来
+// 才能开始 Read/Write，这里以 timeout 内的轻量轮询暴露给 controller。
+//
+// 同时返回 agent 端流（io.ReadWriteCloser）以便 controller 调 io.CopyN 转发
+// HTTP body；ok=false 表示超时或流已被关闭。
+func (s *NezhaHandler) WaitForAgent(ctx context.Context, streamId string, timeout time.Duration) (io.ReadWriteCloser, bool) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		s.ioStreamMutex.RLock()
+		sc, ok := s.ioStreams[streamId]
+		if ok && sc.agentIo != nil {
+			s.ioStreamMutex.RUnlock()
+			return sc.agentIo, true
+		}
+		s.ioStreamMutex.RUnlock()
+		if !ok {
+			return nil, false
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-deadline.C:
+			return nil, false
+		case <-sc.revokedCh:
+			return nil, false
+		case <-sc.agentIoConnectCh:
+			s.ioStreamMutex.RLock()
+			ag := sc.agentIo
+			s.ioStreamMutex.RUnlock()
+			return ag, ag != nil
+		}
+	}
 }
 
 // IsStreamAuthorizedForUser checks whether the requesting user may attach to
@@ -108,6 +165,23 @@ func (s *NezhaHandler) StreamOwnership(streamId string) (uint64, bool) {
 	return ctx.creatorUserID, true
 }
 
+// StreamTarget returns the server ID the stream was opened against and
+// whether the stream is still tracked. Callers MUST pass this through the
+// requesting PAT's CanAccessServer check before allowing attachment —
+// IsStreamAuthorizedForUser only knows about creator/admin, so without this
+// dual gate an admin's server-limited PAT can hijack any stream by knowing
+// the streamId.
+func (s *NezhaHandler) StreamTarget(streamId string) (uint64, bool) {
+	s.ioStreamMutex.RLock()
+	defer s.ioStreamMutex.RUnlock()
+
+	ctx, ok := s.ioStreams[streamId]
+	if !ok {
+		return 0, false
+	}
+	return ctx.targetServerID, true
+}
+
 func (s *NezhaHandler) GetStream(streamId string) (*ioStreamContext, error) {
 	s.ioStreamMutex.RLock()
 	defer s.ioStreamMutex.RUnlock()
@@ -148,6 +222,37 @@ func (s *NezhaHandler) RevokeStreamsForServer(serverID uint64) {
 	}
 }
 
+// RevokeStreamsForPurpose tears down every IOStream tagged with the given
+// purpose. Used as the IOStream half of the MCP kill switch: when the
+// admin flips EnableMCP=false, any in-flight fs.transfer / fs.upload /
+// fs.download must drop immediately rather than wait out the 5min IO
+// timeout. Returns the number of streams revoked so the caller can log
+// the blast radius.
+func (s *NezhaHandler) RevokeStreamsForPurpose(purpose StreamPurpose) int {
+	s.ioStreamMutex.Lock()
+	defer s.ioStreamMutex.Unlock()
+	revoked := 0
+	for streamId, ctx := range s.ioStreams {
+		if ctx.purpose != purpose {
+			continue
+		}
+		ctx.revokedOnce.Do(func() {
+			if ctx.revokedCh != nil {
+				close(ctx.revokedCh)
+			}
+		})
+		if ctx.userIo != nil {
+			ctx.userIo.Close()
+		}
+		if ctx.agentIo != nil {
+			ctx.agentIo.Close()
+		}
+		delete(s.ioStreams, streamId)
+		revoked++
+	}
+	return revoked
+}
+
 func (s *NezhaHandler) CloseStream(streamId string) error {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
@@ -167,32 +272,48 @@ func (s *NezhaHandler) CloseStream(streamId string) error {
 
 
 
+// UserConnected publishes the user-side IO under ioStreamMutex so concurrent
+// Revoke* / WaitForAgent / StartStream see a consistent stream view.
+// Without the lock, the bare assignment to stream.userIo races with the
+// revoker's lock-protected read and triggers go-race.
 func (s *NezhaHandler) UserConnected(streamId string, userIo io.ReadWriteCloser) error {
-	stream, err := s.GetStream(streamId)
-	if err != nil {
-		return err
+	s.ioStreamMutex.Lock()
+	stream, ok := s.ioStreams[streamId]
+	if !ok {
+		s.ioStreamMutex.Unlock()
+		return errors.New("stream not found")
 	}
-
 	stream.userIo = userIo
+	s.ioStreamMutex.Unlock()
 	stream.userIoChOnce.Do(func() {
 		close(stream.userIoConnectCh)
 	})
-
 	return nil
 }
 
+// AgentConnected is the agent-side dual of UserConnected. Same locking
+// rationale.
 func (s *NezhaHandler) AgentConnected(streamId string, agentIo io.ReadWriteCloser) error {
-	stream, err := s.GetStream(streamId)
-	if err != nil {
-		return err
+	s.ioStreamMutex.Lock()
+	stream, ok := s.ioStreams[streamId]
+	if !ok {
+		s.ioStreamMutex.Unlock()
+		return errors.New("stream not found")
 	}
-
 	stream.agentIo = agentIo
+	s.ioStreamMutex.Unlock()
 	stream.agentIoChOnce.Do(func() {
 		close(stream.agentIoConnectCh)
 	})
-
 	return nil
+}
+
+// streamEndpoints returns the user/agent IO under ioStreamMutex so callers
+// never read the interface fields while UserConnected/AgentConnected write them.
+func (s *NezhaHandler) streamEndpoints(stream *ioStreamContext) (userIo, agentIo io.ReadWriteCloser) {
+	s.ioStreamMutex.RLock()
+	defer s.ioStreamMutex.RUnlock()
+	return stream.userIo, stream.agentIo
 }
 
 func (s *NezhaHandler) StartStream(streamId string, timeout time.Duration) error {
@@ -202,62 +323,50 @@ func (s *NezhaHandler) StartStream(streamId string, timeout time.Duration) error
 	}
 
 	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
 
 LOOP:
 	for {
 		select {
 		case <-stream.userIoConnectCh:
-			if stream.agentIo != nil {
-				timeoutTimer.Stop()
+			if _, agentIo := s.streamEndpoints(stream); agentIo != nil {
 				break LOOP
 			}
 		case <-stream.agentIoConnectCh:
-			if stream.userIo != nil {
-				timeoutTimer.Stop()
+			if userIo, _ := s.streamEndpoints(stream); userIo != nil {
 				break LOOP
 			}
-		case <-time.After(timeout):
+		case <-timeoutTimer.C:
 			break LOOP
 		}
 		time.Sleep(time.Millisecond * 500)
 	}
 
-	if stream.userIo == nil && stream.agentIo == nil {
+	userIo, agentIo := s.streamEndpoints(stream)
+	if userIo == nil && agentIo == nil {
 		return singleton.Localizer.ErrorT("timeout: no connection established")
 	}
-	if stream.userIo == nil {
+	if userIo == nil {
 		return singleton.Localizer.ErrorT("timeout: user connection not established")
 	}
-	if stream.agentIo == nil {
+	if agentIo == nil {
 		return singleton.Localizer.ErrorT("timeout: agent connection not established")
 	}
 
-	isDone := new(atomic.Bool)
-	endCh := make(chan struct{})
+	errCh := make(chan error, 2)
 
 	go func() {
 		bp := bufPool.Get().(*bp)
 		defer bufPool.Put(bp)
-		_, innerErr := io.CopyBuffer(stream.userIo, stream.agentIo, bp.buf)
-		if innerErr != nil {
-			err = innerErr
-		}
-		if isDone.CompareAndSwap(false, true) {
-			close(endCh)
-		}
+		_, innerErr := io.CopyBuffer(userIo, agentIo, bp.buf)
+		errCh <- innerErr
 	}()
 	go func() {
 		bp := bufPool.Get().(*bp)
 		defer bufPool.Put(bp)
-		_, innerErr := io.CopyBuffer(stream.agentIo, stream.userIo, bp.buf)
-		if innerErr != nil {
-			err = innerErr
-		}
-		if isDone.CompareAndSwap(false, true) {
-			close(endCh)
-		}
+		_, innerErr := io.CopyBuffer(agentIo, userIo, bp.buf)
+		errCh <- innerErr
 	}()
 
-	<-endCh
-	return err
+	return <-errCh
 }

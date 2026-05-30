@@ -36,8 +36,7 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 	if server == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}
-	stream := server.GetTaskStream()
-	if stream == nil {
+	if server.GetTaskStream() == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}
 
@@ -55,7 +54,7 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 	fmData, _ := json.Marshal(&model.TaskFM{
 		StreamID: streamId,
 	})
-	if err := stream.Send(&proto.Task{
+	if err := server.SendTask(&proto.Task{
 		Type: model.TaskTypeFM,
 		Data: string(fmData),
 	}); err != nil {
@@ -79,7 +78,7 @@ func fmStream(c *gin.Context) (any, error) {
 	// GHSA-style fix: io_stream sessions must be reachable only by their creator
 	// (or an admin). Without this, any authenticated user who learns a stream
 	// UUID can hijack a live file-manager session on the target server.
-	if !rpc.NezhaHandlerSingleton.IsStreamAuthorizedForUser(streamId, getUid(c), callerIsAdmin(c)) {
+	if !streamAttachAllowedForRequest(c, streamId) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 	if _, err := rpc.NezhaHandlerSingleton.GetStream(streamId); err != nil {
@@ -93,6 +92,9 @@ func fmStream(c *gin.Context) (any, error) {
 	}
 	defer wsConn.Close()
 	conn := websocketx.NewConn(wsConn)
+
+	deregisterPAT := registerPATConnection(c, func() { _ = wsConn.Close() })
+	defer deregisterPAT()
 
 	go func() {
 		// PING 保活

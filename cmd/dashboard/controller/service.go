@@ -2,7 +2,6 @@ package controller
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,7 +55,18 @@ func serviceResponseCacheKey(c *gin.Context) string {
 	if !ok || user == nil {
 		return "list-service::guest"
 	}
-	return fmt.Sprintf("list-service::%t::%d", user.Role.IsAdmin(), user.ID)
+	base := fmt.Sprintf("list-service::%t::%d", user.Role.IsAdmin(), user.ID)
+	tok := APITokenFromContext(c)
+	if tok == nil {
+		return base + "::jwt"
+	}
+	ids := tok.ServerIDs()
+	slices.Sort(ids)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatUint(id, 10))
+	}
+	return fmt.Sprintf("%s::pat:%d::servers:%s", base, tok.ID, strings.Join(parts, ","))
 }
 
 func filterCycleTransferStatsForViewer(c *gin.Context, stats map[uint64]model.CycleTransferStats) map[uint64]model.CycleTransferStats {
@@ -459,6 +469,10 @@ func createService(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
+	if !isValidServiceCover(mf.Cover) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	uid := getUid(c)
 
 	var m model.Service
@@ -518,6 +532,11 @@ func updateService(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&mf); err != nil {
 		return nil, err
 	}
+
+	if !isValidServiceCover(mf.Cover) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	var m model.Service
 	if err := singleton.DB.First(&m, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("service id %d does not exist", id)
@@ -581,6 +600,19 @@ func batchDeleteService(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// 与 batchDeleteCron 对称：DispatchTask 没有 PAT 上下文，这里是阻止
+	// 受限 PAT 通过删除 ServiceCoverAll + 不充分 SkipServers 间接影响
+	// 白名单外 owner servers 探测状态的唯一同步入口。
+	for _, id := range ids {
+		existing, ok := singleton.ServiceSentinelShared.Get(id)
+		if !ok || existing == nil {
+			continue
+		}
+		if err := enforcePATServiceDispatchScope(c, existing); err != nil {
+			return nil, err
+		}
+	}
+
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		return tx.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error
 	})
@@ -593,8 +625,12 @@ func batchDeleteService(c *gin.Context) (any, error) {
 }
 
 func validateServers(c *gin.Context, ss *model.Service) error {
-	if !singleton.ServerShared.CheckPermission(c, maps.Keys(ss.SkipServers)) {
-		return singleton.Localizer.ErrorT("permission denied")
+	if err := checkServiceSkipServerPermission(c, ss.Cover, ss.SkipServers, ss.GetUserID()); err != nil {
+		return err
+	}
+
+	if err := rejectImplicitServiceCoverForLimitedPAT(c, ss.Cover, ss.SkipServers, ss.GetUserID()); err != nil {
+		return err
 	}
 
 	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.FailTriggerTasks)) {
@@ -602,6 +638,9 @@ func validateServers(c *gin.Context, ss *model.Service) error {
 	}
 	if !singleton.CronShared.CheckPermission(c, slices.Values(ss.RecoverTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
+	}
+	if err := enforcePATTriggerTaskScope(c, ss.FailTriggerTasks, ss.RecoverTriggerTasks); err != nil {
+		return err
 	}
 
 	if err := assertOwnsNotificationGroup(c, ss.NotificationGroupID); err != nil {

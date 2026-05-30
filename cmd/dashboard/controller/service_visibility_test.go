@@ -46,3 +46,40 @@ func TestUserCanViewServiceHiddenServiceAllowsAdmin(t *testing.T) {
 	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
 	assert.True(t, userCanViewService(newServiceVisibilityCtx(admin), hidden), "admin must be able to see any hidden service")
 }
+
+// 钉死 admin 自己签发的 server_ids 受限 PAT 不能借助 admin 身份在
+// service 可见性入口绕过白名单：与 userCanViewServer 的 PAT-first 收口
+// 保持对称，避免 hidden service 通过 admin 早返回泄漏给受限 PAT。
+func TestUserCanViewServiceLimitedPATShouldDenyAdminWhenOutsideWhitelist(t *testing.T) {
+	hidden := &model.Service{
+		Common:      model.Common{ID: 1, UserID: 100},
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{2: true},
+	}
+	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
+	tok := &model.APIToken{ID: 7, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+
+	ctx := newServiceVisibilityCtx(admin)
+	ctx.Set(model.CtxKeyAPIToken, tok)
+
+	assert.False(t, userCanViewService(ctx, hidden),
+		"admin caller using a server_ids=[1] PAT must NOT see a CoverIgnoreAll service whose only target is the non-whitelisted server 2")
+}
+
+func TestUserCanViewServiceLimitedPATAllowsAdminInsideWhitelist(t *testing.T) {
+	visible := &model.Service{
+		Common:      model.Common{ID: 2, UserID: 100},
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
+	tok := &model.APIToken{ID: 7, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+
+	ctx := newServiceVisibilityCtx(admin)
+	ctx.Set(model.CtxKeyAPIToken, tok)
+
+	assert.True(t, userCanViewService(ctx, visible),
+		"admin caller using a server_ids=[1] PAT must still see a CoverIgnoreAll service bound to whitelisted server 1")
+}

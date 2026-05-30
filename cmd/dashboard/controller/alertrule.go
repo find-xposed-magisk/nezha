@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -168,9 +167,14 @@ func batchDeleteAlertRule(c *gin.Context) (any, error) {
 }
 
 func validateRule(c *gin.Context, r *model.AlertRule) error {
+	if !r.HasPermission(c) {
+		return singleton.Localizer.ErrorT("permission denied")
+	}
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
-			if !singleton.ServerShared.CheckPermission(c, maps.Keys(rule.Ignore)) {
+			switch rule.Cover {
+			case model.RuleCoverAll, model.RuleCoverIgnoreAll:
+			default:
 				return singleton.Localizer.ErrorT("permission denied")
 			}
 
@@ -199,6 +203,9 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 	}
 	if !singleton.CronShared.CheckPermission(c, slices.Values(r.RecoverTriggerTasks)) {
 		return singleton.Localizer.ErrorT("permission denied")
+	}
+	if err := enforcePATTriggerTaskScope(c, r.FailTriggerTasks, r.RecoverTriggerTasks); err != nil {
+		return err
 	}
 
 	if err := assertOwnsNotificationGroup(c, r.NotificationGroupID); err != nil {
