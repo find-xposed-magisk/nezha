@@ -17,7 +17,12 @@ const (
 	CtxKeyAuthorizedUser = "ckau"
 	CtxKeyRealIPStr      = "ckri"
 	CtxKeyIsIPMismatch   = "ckipm"
+	CtxKeyAPIToken       = "ckpat"
 )
+
+type APITokenAccessor interface {
+	CanAccessServer(uint64) bool
+}
 
 const (
 	CacheKeyOauth2State = "cko2s::"

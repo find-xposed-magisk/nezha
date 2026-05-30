@@ -35,7 +35,10 @@ func issueJWTSession(c *gin.Context, user *model.User, jwtTimeoutHours int) (map
 	if err != nil {
 		return nil, err
 	}
-	hashUID, err := idcodec.Encode(user.ID)
+	// encodedUID is reversible Sqids obfuscation keyed by JWTSecretKey, NOT
+	// a one-way hash. It exists to defeat enumeration on the wire, not to
+	// keep the uid confidential — see L2 note in idcodec docs.
+	encodedUID, err := idcodec.Encode(user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +57,7 @@ func issueJWTSession(c *gin.Context, user *model.User, jwtTimeoutHours int) (map
 		return nil, err
 	}
 	return map[string]interface{}{
-		jwtClaimUserID: hashUID,
+		jwtClaimUserID: encodedUID,
 		jwtClaimKeyID:  keyID,
 	}, nil
 }
@@ -91,6 +94,7 @@ func initParams() *jwt.GinJWTMiddleware {
 		TimeFunc:      time.Now,
 
 		LoginResponse: func(c *gin.Context, code int, token string, expire time.Time) {
+			setCSRFCookie(c)
 			c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
 				Success: true,
 				Data: model.LoginResponse{
@@ -120,11 +124,11 @@ func identityHandler() func(c *gin.Context) any {
 		if !ok || keyID == "" {
 			return nil
 		}
-		hashUID, ok := claims[jwtClaimUserID].(string)
-		if !ok || hashUID == "" {
+		encodedUID, ok := claims[jwtClaimUserID].(string)
+		if !ok || encodedUID == "" {
 			return nil
 		}
-		claimUID, err := idcodec.Decode(hashUID)
+		claimUID, err := idcodec.Decode(encodedUID)
 		if err != nil {
 			realIP := c.GetString(model.CtxKeyRealIPStr)
 			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
@@ -237,7 +241,7 @@ func unauthorized() func(c *gin.Context, code int, message string) {
 // @Tags auth required
 // @Produce json
 // @Success 200 {object} model.CommonResponse[model.LoginResponse]
-// @Router /refresh-token [get]
+// @Router /refresh-token [post]
 func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 	if keyID := c.GetString(jwtClaimKeyID); keyID != "" {
 		_ = singleton.DB.Model(&model.JWTSession{}).
@@ -247,6 +251,7 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 				"last_used_at": time.Now(),
 			}).Error
 	}
+	setCSRFCookie(c)
 	c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
 		Success: true,
 		Data: model.LoginResponse{

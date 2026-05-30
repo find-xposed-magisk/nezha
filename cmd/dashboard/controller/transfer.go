@@ -78,6 +78,9 @@ func cancelServerTransfer(c *gin.Context) (*model.ServerTransfer, error) {
 	if err := q.First(&t, tid).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
+	if !t.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
 
 	updated, err := singleton.ServerTransferShared.Cancel(tid)
 	if err != nil {
@@ -132,6 +135,14 @@ func retryServerTransfer(c *gin.Context) (*model.ServerTransfer, error) {
 		return nil, newGormError("%v", err)
 	}
 
+	// PAT server_ids 白名单必须在 admin short-circuit 之后再收一次，否则
+	// admin 给自己签发的“仅 server_ids={X}”PAT 仍能 retry 任意历史 transfer
+	// 行，与 ServerTransfer.HasPermission 注释和 cancelServerTransfer 已有
+	// 的复核语义直接冲突。
+	if !prev.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	return singleton.ServerTransferShared.Retry(&prev, getUid(c))
 }
 
@@ -165,6 +176,9 @@ func transferStream(c *gin.Context) (any, error) {
 		return nil, newWsError("%v", err)
 	}
 	defer conn.Close()
+
+	deregisterPAT := registerPATConnection(c, func() { _ = conn.Close() })
+	defer deregisterPAT()
 
 	subID, ch := singleton.ServerTransferShared.Subscribe()
 	defer singleton.ServerTransferShared.Unsubscribe(subID)

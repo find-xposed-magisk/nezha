@@ -2,11 +2,13 @@ package controller
 
 import (
 	"errors"
+	"log"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/service/rpc"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -107,13 +109,59 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.AgentRealIPHeader = sf.AgentRealIPHeader
 	singleton.Conf.AgentTLS = sf.AgentTLS
 	singleton.Conf.UserTemplate = sf.UserTemplate
+	mcpWasEnabled := singleton.Conf.MCPEnabled()
+	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
 
-	if err := singleton.Conf.Save(); err != nil {
+	if err := applyEnableMCPTransition(
+		mcpWasEnabled, mcpNext,
+		singleton.Conf.SetMCPEnabled,
+		singleton.Conf.Save,
+		fireMCPKillSwitch,
+	); err != nil {
 		return nil, newGormError("%v", err)
 	}
 
 	singleton.OnUpdateLang(singleton.Conf.Language)
 	return nil, nil
+}
+
+// applyEnableMCPTransition commits the new EnableMCP value and persists it,
+// guaranteeing the in-memory flag and the kill-switch cleanup stay consistent
+// with what actually reached durable storage:
+//   - setVal(next) is applied so Save serialises the new value.
+//   - If save fails, the flag is rolled back to prev and no cleanup runs, so a
+//     failed disable cannot leave the dashboard half-disabled (new requests
+//     rejected while in-flight RPC/streams/URLs are never revoked).
+//   - cleanup runs only on a persisted enabled->disabled transition.
+func applyEnableMCPTransition(prev, next bool, setVal func(bool), save func() error, cleanup func()) error {
+	setVal(next)
+	if err := save(); err != nil {
+		setVal(prev)
+		return err
+	}
+	if prev && !next {
+		cleanup()
+	}
+	return nil
+}
+
+func fireMCPKillSwitch() {
+	purgedURLs := PurgeTransferEntries()
+	revokedStreams := rpc.NezhaHandlerSingleton.RevokeStreamsForPurpose(rpc.PurposeMCPTransfer)
+	cancelledRPC := rpc.CancelAllMCPInflight()
+	log.Printf("NEZHA>> MCP kill switch fired: purged=%d urls, revoked=%d streams, cancelled=%d rpc",
+		purgedURLs, revokedStreams, cancelledRPC)
+}
+
+// resolveSettingEnableMCP picks the effective EnableMCP value for the
+// update. A nil form pointer means "field absent" so we MUST preserve
+// the current config to avoid accidentally tripping the kill switch on
+// partial PATCH calls that omit enable_mcp.
+func resolveSettingEnableMCP(formValue *bool, current bool) bool {
+	if formValue == nil {
+		return current
+	}
+	return *formValue
 }
 
 // Perform maintenance

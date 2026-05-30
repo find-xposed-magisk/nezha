@@ -101,6 +101,13 @@ func initIDCodec() error {
 // @securityDefinitions.apikey  BearerAuth
 // @in header
 // @name Authorization
+// @description JWT session token. Browser/UI flow. Format: `Bearer <jwt>` or cookie `nz-jwt`.
+
+// @securityDefinitions.apikey  APITokenAuth
+// @in header
+// @name Authorization
+// @description Personal Access Token (PAT). Programmatic/CI/LLM flow. Format: `Bearer nzp_<secret>`.
+// @description Each endpoint enforces a specific scope; see the `controller` package godoc for the authoritative scope table.
 
 // @externalDocs.description  OpenAPI
 // @externalDocs.url          https://swagger.io/resources/open-api/
@@ -140,6 +147,9 @@ func main() {
 
 	singleton.CleanMonitorHistory()
 	rpc.DispatchKeepalive()
+	rpc.SetMCPKillSwitchObserver(func() bool {
+		return singleton.Conf == nil || !singleton.Conf.MCPEnabled()
+	})
 	go rpc.DispatchTask(serviceSentinelDispatchBus)
 	go singleton.AlertSentinelStart()
 

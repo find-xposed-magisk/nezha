@@ -81,10 +81,20 @@ type ServerTransfer struct {
 // admins, the source user, the destination user, and the initiator. Listing
 // uses this to filter what the caller can see; mutating endpoints (cancel,
 // retry) layer additional checks on top.
+//
+// PAT server_ids whitelist is evaluated FIRST, before the admin short-
+// circuit, so an admin-issued PAT scoped to a subset of servers cannot
+// widen reach by virtue of the caller being an admin. JWT callers (no PAT
+// in context) skip the whitelist check.
 func (t *ServerTransfer) HasPermission(ctx *gin.Context) bool {
 	auth, ok := ctx.Get(CtxKeyAuthorizedUser)
 	if !ok {
 		return false
+	}
+	if v, ok := ctx.Get(CtxKeyAPIToken); ok {
+		if tok, _ := v.(APITokenAccessor); tok != nil && !tok.CanAccessServer(t.ServerID) {
+			return false
+		}
 	}
 	user := *auth.(*User)
 	if user.Role == RoleAdmin {

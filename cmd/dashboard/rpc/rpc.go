@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,6 +21,13 @@ import (
 	rpcService "github.com/nezhahq/nezha/service/rpc"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+// SetMCPKillSwitchObserver re-exports the service/rpc hook so cmd/dashboard
+// can wire singleton.Conf.EnableMCP without importing the inner rpc package
+// (cmd/dashboard already imports cmd/dashboard/rpc for ServeRPC).
+func SetMCPKillSwitchObserver(fn func() bool) {
+	rpcService.SetMCPKillSwitchObserver(fn)
+}
 
 func ServeRPC() *grpc.Server {
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(getRealIp, waf))
@@ -96,27 +104,30 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				if server == nil {
 					continue
 				}
-				stream := server.GetTaskStream()
-				if stream == nil {
+				if !canSendTaskToServer(task, server) {
 					continue
 				}
-
-				if canSendTaskToServer(task, server) {
-					stream.Send(task.PB())
+				// SendTask 走 holder-scoped send mutex，避免与 cron /
+				// server-transfer / MCP CallAgent / fs.transfer 等并发
+				// SendMsg 同一 RequestTask stream。
+				if err := server.SendTask(task.PB()); err != nil &&
+					!errors.Is(err, model.ErrTaskStreamOffline) {
+					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}
 		case model.ServiceCoverAll:
-			for id, server := range singleton.ServerShared.Range {
+			// 快照后逐个 SendTask，不在 ServerShared 的 listMu.RLock 内做阻塞
+			// gRPC：否则一个卡死 agent 会拖死需要写锁的 server 生命周期操作。
+			for id, server := range singleton.ServerShared.GetList() {
 				if server == nil || task.SkipServers[id] {
 					continue
 				}
-				stream := server.GetTaskStream()
-				if stream == nil {
+				if !canSendTaskToServer(task, server) {
 					continue
 				}
-
-				if canSendTaskToServer(task, server) {
-					stream.Send(task.PB())
+				if err := server.SendTask(task.PB()); err != nil &&
+					!errors.Is(err, model.ErrTaskStreamOffline) {
+					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}
 		}
@@ -130,11 +141,10 @@ func DispatchKeepalive() {
 			if s == nil {
 				continue
 			}
-			stream := s.GetTaskStream()
-			if stream == nil {
-				continue
+			if err := s.SendTask(&proto.Task{Type: model.TaskTypeKeepalive}); err != nil &&
+				!errors.Is(err, model.ErrTaskStreamOffline) {
+				log.Printf("NEZHA>> Keepalive send error (server=%d): %v", s.ID, err)
 			}
-			stream.Send(&proto.Task{Type: model.TaskTypeKeepalive})
 		}
 	})
 }
@@ -146,8 +156,7 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		w.Write([]byte("server not found or not connected"))
 		return
 	}
-	stream := server.GetTaskStream()
-	if stream == nil {
+	if server.GetTaskStream() == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("server not found or not connected"))
 		return
@@ -179,7 +188,7 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		return
 	}
 
-	if err := stream.Send(&proto.Task{
+	if err := server.SendTask(&proto.Task{
 		Type: model.TaskTypeNAT,
 		Data: string(taskData),
 	}); err != nil {

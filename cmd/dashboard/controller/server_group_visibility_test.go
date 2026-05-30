@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -119,4 +122,81 @@ func TestListServerGroupAdminSeesAllGroupsIncludingEmpty(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"Public Group", "Empty Group"}, names,
 		"admin must keep full visibility, including empty groups")
+}
+
+func newServerGroupCtxWithPAT(viewer *model.User, tok *model.APIToken) *gin.Context {
+	c := newServerGroupCtx(viewer)
+	if tok != nil {
+		c.Set(model.CtxKeyAPIToken, tok)
+	}
+	return c
+}
+
+// PAT scoped to server_ids must hide groups whose membership is entirely
+// outside the whitelist and must strip out-of-whitelist server IDs from
+// remaining groups. Otherwise admin-issued limited PATs still enumerate
+// every group name + server id via /api/v1/server-group.
+func TestListServerGroupPATWhitelistFiltersGroupsAndServerIDs(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{
+		Common: model.Common{UserID: 1}, ServerGroupId: 10, ServerId: 2,
+	}).Error)
+
+	tok := &model.APIToken{ID: 77, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+
+	items, err := listServerGroup(newServerGroupCtxWithPAT(&model.User{
+		Common: model.Common{ID: 1}, Role: model.RoleAdmin,
+	}, tok))
+	require.NoError(t, err)
+
+	names := collectGroupNames(items)
+	assert.ElementsMatch(t, []string{"Public Group"}, names,
+		"PAT scoped to {1} must drop the empty group and not surface group names containing only server 2")
+
+	if assert.Len(t, items, 1) {
+		assert.ElementsMatch(t, []uint64{1}, items[0].Servers,
+			"server IDs outside the PAT whitelist must be redacted from the response")
+	}
+}
+
+func TestListServerGroupPATWithDisjointWhitelistReturnsEmpty(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	tok := &model.APIToken{ID: 78, UserID: 1}
+	tok.SetServerIDs([]uint64{9999})
+
+	items, err := listServerGroup(newServerGroupCtxWithPAT(&model.User{
+		Common: model.Common{ID: 1}, Role: model.RoleAdmin,
+	}, tok))
+	require.NoError(t, err)
+	assert.Empty(t, items, "PAT scoped to a server it cannot reach must see no groups, not all of them")
+}
+
+// batchDeleteServerGroup must refuse to delete a group whose members are not
+// entirely covered by the PAT whitelist; otherwise an admin's limited PAT can
+// drop groups that touch servers outside its scope.
+func TestBatchDeleteServerGroupRejectsPATOutsideWhitelist(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{
+		Common: model.Common{UserID: 1}, ServerGroupId: 10, ServerId: 2,
+	}).Error)
+
+	tok := &model.APIToken{ID: 79, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+
+	c := newServerGroupCtxWithPAT(&model.User{
+		Common: model.Common{ID: 1}, Role: model.RoleAdmin,
+	}, tok)
+	body, _ := json.Marshal([]uint64{10})
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/batch-delete/server-group", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	_, err := batchDeleteServerGroup(c)
+	require.Error(t, err, "PAT scoped to {1} must not delete group 10 which still contains server 2")
+
+	var remaining int64
+	require.NoError(t, singleton.DB.Model(&model.ServerGroup{}).Where("id = ?", 10).Count(&remaining).Error)
+	assert.Equal(t, int64(1), remaining, "group 10 must remain after refused PAT delete")
 }
