@@ -64,7 +64,7 @@ const (
 	ScopeNotificationDelete = "nezha:notification:delete"
 
 	ScopeNotificationGroupRead   = "nezha:notification-group:read"
-	ScopeNotificationGroupWrite  = "nezha:notification-group:write"
+	ScopeNotificationGroupWrite  = "nezha:notification-group:write" // #nosec G101 -- scope identifier, not a credential
 	ScopeNotificationGroupDelete = "nezha:notification-group:delete"
 
 	ScopeTransferRead   = "nezha:transfer:read"
