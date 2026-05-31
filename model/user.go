@@ -25,7 +25,7 @@ type User struct {
 	Common
 	Username       string `json:"username,omitempty" gorm:"uniqueIndex"`
 	Password       string `json:"password,omitempty" gorm:"type:char(72)"`
-	Role           Role   `json:"role,omitempty"`
+	Role           Role   `json:"role"`
 	AgentSecret    string `json:"agent_secret,omitempty" gorm:"type:char(32)"`
 	RejectPassword bool   `json:"reject_password,omitempty"`
 	TokenVersion   uint64 `json:"-" gorm:"not null;default:0"`
