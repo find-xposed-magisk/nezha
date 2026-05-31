@@ -23,7 +23,7 @@ import (
 // @Security BearerAuth
 // @Security APITokenAuth
 // @Schemes
-// @Description List server. PAT scope required: nezha:server:read.
+// @Description List server. PAT scope required: nezha:inventory:read.
 // @Tags auth required
 // @Param id query uint false "Resource ID"
 // @Produce json

@@ -27,6 +27,18 @@ func init() {
 			"type":       "object",
 			"properties": map[string]any{},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"user_id":    map[string]any{"type": "integer"},
+				"is_admin":   map[string]any{"type": "boolean"},
+				"token_id":   map[string]any{"type": "integer"},
+				"token_name": map[string]any{"type": "string"},
+				"scopes":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"server_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
+			},
+			"required": []string{"user_id", "is_admin", "token_id", "scopes"},
+		},
 		RequiredScope: "",
 		Handler:       handleMetaWhoami,
 	})

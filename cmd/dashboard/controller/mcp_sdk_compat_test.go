@@ -53,6 +53,8 @@ func setupSDKCompat(t *testing.T) (string, string, func()) {
 	srv.SetTaskStream(&e2eStream{dispatch: agentSim})
 
 	_, plain := mkToken(t, uid, []string{
+		model.ScopeInventoryRead,
+		model.ScopeInventoryDelete,
 		model.ScopeServerRead,
 		model.ScopeServerWrite,
 		model.ScopeServerDelete,

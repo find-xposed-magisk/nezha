@@ -19,7 +19,7 @@ func setupRESTScopeTest(t *testing.T) (*httptest.Server, *model.APIToken, string
 	t.Helper()
 	cleanupBase, uid := setupMCPTest(t)
 
-	tok, plain := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	tok, plain := mkToken(t, uid, []string{model.ScopeInventoryRead}, nil)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -27,7 +27,7 @@ func setupRESTScopeTest(t *testing.T) (*httptest.Server, *model.APIToken, string
 
 	r.GET("/server",
 		patMw,
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	r.POST("/server/config",
@@ -102,11 +102,13 @@ func TestREST_PATWildcardCoversAllVerbs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	patMw := apiTokenAuthMiddleware()
-	r.GET("/server", patMw, restScopeMiddleware(model.ScopeServerRead),
+	r.GET("/server/config/0", patMw, restScopeMiddleware(model.ScopeServerRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 	r.POST("/server/config", patMw, restScopeMiddleware(model.ScopeServerWrite),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
-	r.POST("/batch-delete/server", patMw, restScopeMiddleware(model.ScopeServerDelete),
+	r.POST("/file", patMw, restScopeMiddleware(model.ScopeServerDelete),
+		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	r.POST("/terminal", patMw, restScopeMiddleware(model.ScopeServerExec),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 	ts := httptest.NewServer(r)
 	defer ts.Close()
@@ -114,9 +116,10 @@ func TestREST_PATWildcardCoversAllVerbs(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
 	}{
-		{"GET", "/server"},
+		{"GET", "/server/config/0"},
 		{"POST", "/server/config"},
-		{"POST", "/batch-delete/server"},
+		{"POST", "/file"},
+		{"POST", "/terminal"},
 	} {
 		resp := doReq(t, ts, tc.method, tc.path, plain)
 		resp.Body.Close()
@@ -158,7 +161,7 @@ func TestREST_NoAuthGoesToJWTChain(t *testing.T) {
 	r := gin.New()
 	r.GET("/server",
 		jwtOrPATAuthMiddleware(apiTokenAuthMiddleware(), fakeJwt),
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	ts := httptest.NewServer(r)
@@ -184,7 +187,7 @@ func TestREST_BadPATShortCircuitsBeforeJWT(t *testing.T) {
 	})
 	r.GET("/server",
 		jwtOrPATAuthMiddleware(apiTokenAuthMiddleware(), fakeJwt),
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	ts := httptest.NewServer(r)

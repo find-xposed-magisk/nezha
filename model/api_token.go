@@ -12,7 +12,7 @@ import (
 
 // Scope 命名规范（唯一一套）：nezha:{resource}:{verb}
 //
-//   - resource: server / service / alertrule / cron / ddns / nat /
+//   - resource: inventory / server / service / alertrule / cron / ddns / nat /
 //     notification / notification-group / transfer / admin
 //   - verb: read / write / delete / exec
 //
@@ -20,8 +20,10 @@ import (
 //   - nezha:server:* 给定资源的所有动作
 //   - nezha:* admin-only 全权
 //
-// 同一 scope 同时管 MCP tool 和 REST endpoint：例如 nezha:server:read 既允许
-// `server.list` MCP tool，也允许 `GET /api/v1/server`。
+// inventory 与 server 已拆开：inventory 管“能看到/能删哪些机器”——`server.list`
+// MCP tool、`GET /api/v1/server`、`/server-group`、batch-delete server/group 都用
+// nezha:inventory:{read,delete}；server 管对已知机器的运行态操作（server.get、
+// exec、文件读写、编辑配置、metrics）。同一 scope 同时管 MCP tool 和 REST endpoint。
 //
 // 历史上还有 mcp:* 一套，会被 HasScope 通过别名映射到 nezha:server:* 子集。
 // 由于 HasScope 同时服务 MCP tool 调度与 REST scope middleware，旧 mcp:fs:write
@@ -32,6 +34,14 @@ import (
 // 数据库已有的危险旧 scope 由 MigrateLegacyMCPScopes 在启动迁移阶段清理。
 const (
 	ScopeNezhaAll = "nezha:*"
+
+	// inventory 资源域：管理后台对“服务器清单”本身的枚举与删除（列出 GET /server、
+	// 删除 batch-delete/server、server-group 的列出/删除，以及 MCP server.list）。
+	// 刻意与 nezha:server:* 分开：后者是对已知 server 的运行态操作（exec / 文件读写 /
+	// 编辑 / metrics），而 inventory 是“能看到/能删哪些机器”的台账权限。拆开后，
+	// 一张只跑命令的 PAT 不必同时具备遍历和删除整个清单的能力。
+	ScopeInventoryRead   = "nezha:inventory:read"
+	ScopeInventoryDelete = "nezha:inventory:delete"
 
 	ScopeServerRead   = "nezha:server:read"
 	ScopeServerWrite  = "nezha:server:write"
@@ -75,6 +85,7 @@ const (
 )
 
 var AllScopes = []string{
+	ScopeInventoryRead, ScopeInventoryDelete,
 	ScopeServerRead, ScopeServerWrite, ScopeServerDelete, ScopeServerExec,
 	ScopeServiceRead, ScopeServiceWrite, ScopeServiceDelete,
 	ScopeAlertRuleRead, ScopeAlertRuleWrite, ScopeAlertRuleDelete,
@@ -85,6 +96,7 @@ var AllScopes = []string{
 	ScopeNotificationGroupRead, ScopeNotificationGroupWrite, ScopeNotificationGroupDelete,
 	ScopeTransferRead, ScopeTransferWrite, ScopeTransferDelete,
 
+	"nezha:inventory:*",
 	"nezha:server:*",
 	"nezha:service:*",
 	"nezha:alertrule:*",
@@ -124,17 +136,17 @@ const APITokenPrefix = "nzp_"
 // APIToken 是用户用于程序化访问的长期凭证。MCP 接入点 /mcp 用它做鉴权。
 // 双层鉴权：闸 1 用 UserID 复用 Server.HasPermission；闸 2 用 Scopes / ServerIDs。
 type APIToken struct {
-	ID         uint64    `gorm:"primaryKey" json:"id,omitempty"`
-	UserID     uint64    `gorm:"index" json:"user_id,omitempty"`
-	Name       string    `gorm:"type:varchar(128)" json:"name,omitempty"`
-	TokenHash  string    `gorm:"uniqueIndex;type:char(64)" json:"-"`
-	ScopesCSV  string    `gorm:"type:text" json:"-"`
-	ServersCSV string    `gorm:"type:text" json:"-"`
+	ID         uint64     `gorm:"primaryKey" json:"id,omitempty"`
+	UserID     uint64     `gorm:"index" json:"user_id,omitempty"`
+	Name       string     `gorm:"type:varchar(128)" json:"name,omitempty"`
+	TokenHash  string     `gorm:"uniqueIndex;type:char(64)" json:"-"`
+	ScopesCSV  string     `gorm:"type:text" json:"-"`
+	ServersCSV string     `gorm:"type:text" json:"-"`
 	ExpiresAt  *time.Time `gorm:"index" json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	LastUsedIP string    `gorm:"type:varchar(64)" json:"last_used_ip,omitempty"`
-	CreatedAt  time.Time `json:"created_at,omitempty"`
-	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at,omitempty"`
+	LastUsedIP string     `gorm:"type:varchar(64)" json:"last_used_ip,omitempty"`
+	CreatedAt  time.Time  `json:"created_at,omitempty"`
+	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at,omitempty"`
 }
 
 func (APIToken) TableName() string {

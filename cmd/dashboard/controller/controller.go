@@ -88,8 +88,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	optionalAuthMw := utils.IfOr(singleton.Conf.ForceAuth, authMw, patOrFallbackAuthMiddleware(patMw, fallbackAuthMw))
 
 	optionalAuth := api.Group("", optionalAuthMw)
-	optionalAuth.GET("/ws/server", restScopeMiddleware(model.ScopeServerRead), commonHandler(serverStream))
-	optionalAuth.GET("/server-group", restScopeMiddleware(model.ScopeServerRead), commonHandler(listServerGroup))
+	optionalAuth.GET("/ws/server", restScopeMiddleware(model.ScopeInventoryRead), commonHandler(serverStream))
+	optionalAuth.GET("/server-group", restScopeMiddleware(model.ScopeInventoryRead), commonHandler(listServerGroup))
 
 	optionalAuth.GET("/service", restScopeMiddleware(model.ScopeServiceRead), commonHandler(showService))
 	optionalAuth.GET("/service/server", restScopeMiddleware(model.ScopeServiceRead), commonHandler(listServerWithServices))
@@ -112,21 +112,25 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/api-tokens", patForbidden, commonHandler(createAPIToken))
 	auth.DELETE("/api-tokens/:id", patForbidden, commonHandler(deleteAPIToken))
 
-	// server / terminal / fm / transfer 共享 nezha:server:* 资源族
+	// 资源族划分：
+	//   - nezha:inventory:* —— 对“服务器台账”的枚举与删除（列出 server / server-group、
+	//     删除 server / server-group）。这是管理后台清单管理动作。
+	//   - nezha:server:*    —— 对已知 server 的运行态操作（exec、文件读写、编辑配置、
+	//     force-update、batch-move）。
 	auth.POST("/terminal", restScopeMiddleware(model.ScopeServerExec), commonHandler(createTerminal))
 	auth.GET("/ws/terminal/:id", restScopeMiddleware(model.ScopeServerExec), commonHandler(terminalStream))
 	auth.POST("/file", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(createFM))
 	auth.GET("/ws/file/:id", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(fmStream))
-	auth.GET("/server", restScopeMiddleware(model.ScopeServerRead), listHandler(listServer))
+	auth.GET("/server", restScopeMiddleware(model.ScopeInventoryRead), listHandler(listServer))
 	auth.PATCH("/server/:id", restScopeMiddleware(model.ScopeServerWrite), commonHandler(updateServer))
 	auth.GET("/server/config/:id", restScopeMiddleware(serverConfigSensitiveScope()), commonHandler(getServerConfig))
 	auth.POST("/server/config", restScopeMiddleware(model.ScopeServerWrite), commonHandler(setServerConfig))
-	auth.POST("/batch-delete/server", restScopeMiddleware(model.ScopeServerDelete), commonHandler(batchDeleteServer))
+	auth.POST("/batch-delete/server", restScopeMiddleware(model.ScopeInventoryDelete), commonHandler(batchDeleteServer))
 	auth.POST("/batch-move/server", restScopeMiddleware(model.ScopeServerWrite), commonHandler(batchMoveServer))
 	auth.POST("/force-update/server", restScopeMiddleware(model.ScopeServerWrite), commonHandler(forceUpdateServer))
 	auth.POST("/server-group", restScopeMiddleware(model.ScopeServerWrite), commonHandler(createServerGroup))
 	auth.PATCH("/server-group/:id", restScopeMiddleware(model.ScopeServerWrite), commonHandler(updateServerGroup))
-	auth.POST("/batch-delete/server-group", restScopeMiddleware(model.ScopeServerDelete), commonHandler(batchDeleteServerGroup))
+	auth.POST("/batch-delete/server-group", restScopeMiddleware(model.ScopeInventoryDelete), commonHandler(batchDeleteServerGroup))
 
 	// transfer — 严格使用 nezha:transfer 资源族 scope（read/write/delete）。
 	// 注意：曾经计划让 nezha:server:read 兼听只读 transfer，但 restScopeMiddleware

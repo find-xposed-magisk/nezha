@@ -21,7 +21,7 @@ func TestServerList_FiltersByPermission(t *testing.T) {
 	srv2.SetUserID(999)
 	singleton.ServerShared.InsertForTest(srv2)
 
-	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	tok, _ := mkToken(t, uid, []string{model.ScopeInventoryRead}, nil)
 	c, w := mcpCallCtx(t, tok, uid, jsonRPCRequest{
 		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call",
 		Params: jsonObj(t, toolCallParams{Name: "server.list", Arguments: json.RawMessage("{}")}),
@@ -30,11 +30,24 @@ func TestServerList_FiltersByPermission(t *testing.T) {
 	_, tcr := decodeRPC(w)
 	require.False(t, tcr.IsError)
 
-	rb, _ := json.Marshal(tcr.StructuredContent)
-	var rows []map[string]any
-	require.NoError(t, json.Unmarshal(rb, &rows))
+	rows := decodeServerListRows(t, tcr.StructuredContent)
 	require.Len(t, rows, 1, "must filter out non-owned server")
 	require.EqualValues(t, 7, rows[0]["id"])
+}
+
+// decodeServerListRows unwraps the {servers,count} object that server.list now
+// returns (MCP requires structuredContent to be an object, not a bare array)
+// and asserts count stays in sync with the servers slice length.
+func decodeServerListRows(t *testing.T, structured any) []map[string]any {
+	t.Helper()
+	rb, _ := json.Marshal(structured)
+	var res struct {
+		Servers []map[string]any `json:"servers"`
+		Count   int              `json:"count"`
+	}
+	require.NoError(t, json.Unmarshal(rb, &res))
+	require.Equal(t, len(res.Servers), res.Count, "count must match servers length")
+	return res.Servers
 }
 
 func TestServerList_ServerWhitelistFurtherFiltering(t *testing.T) {
@@ -47,7 +60,7 @@ func TestServerList_ServerWhitelistFurtherFiltering(t *testing.T) {
 	srv2.SetUserID(uid)
 	singleton.ServerShared.InsertForTest(srv2)
 
-	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, []uint64{8})
+	tok, _ := mkToken(t, uid, []string{model.ScopeInventoryRead}, []uint64{8})
 	c, w := mcpCallCtx(t, tok, uid, jsonRPCRequest{
 		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call",
 		Params: jsonObj(t, toolCallParams{Name: "server.list", Arguments: json.RawMessage("{}")}),
@@ -55,9 +68,7 @@ func TestServerList_ServerWhitelistFurtherFiltering(t *testing.T) {
 	mcpEndpoint(c)
 	_, tcr := decodeRPC(w)
 	require.False(t, tcr.IsError)
-	rb, _ := json.Marshal(tcr.StructuredContent)
-	var rows []map[string]any
-	require.NoError(t, json.Unmarshal(rb, &rows))
+	rows := decodeServerListRows(t, tcr.StructuredContent)
 	require.Len(t, rows, 1)
 	require.EqualValues(t, 8, rows[0]["id"])
 }
@@ -70,7 +81,7 @@ func TestServerList_OnlineOnlyFilter(t *testing.T) {
 	require.NotNil(t, srv)
 	srv.LastActive = time.Now()
 
-	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	tok, _ := mkToken(t, uid, []string{model.ScopeInventoryRead}, nil)
 	c, w := mcpCallCtx(t, tok, uid, jsonRPCRequest{
 		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call",
 		Params: jsonObj(t, toolCallParams{Name: "server.list", Arguments: jsonRaw(map[string]any{"online_only": true})}),
@@ -78,9 +89,7 @@ func TestServerList_OnlineOnlyFilter(t *testing.T) {
 	mcpEndpoint(c)
 	_, tcr := decodeRPC(w)
 	require.False(t, tcr.IsError)
-	rb, _ := json.Marshal(tcr.StructuredContent)
-	var rows []map[string]any
-	require.NoError(t, json.Unmarshal(rb, &rows))
+	rows := decodeServerListRows(t, tcr.StructuredContent)
 	require.Len(t, rows, 1)
 }
 

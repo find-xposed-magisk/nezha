@@ -85,9 +85,10 @@ type mcpInitializeResult struct {
 
 // mcpToolDescriptor 是 tools/list 返回的单条 tool 描述。
 type mcpToolDescriptor struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 }
 
 // mcpToolsListResult tools/list 响应。
@@ -119,7 +120,8 @@ type mcpTool struct {
 	Name          string
 	Description   string
 	InputSchema   map[string]any
-	RequiredScope string // 闸 2 入口；空字符串 = 任意 PAT 都能调（如 meta.whoami）
+	OutputSchema  map[string]any // 可选；声明 structuredContent 形状，供严格客户端校验
+	RequiredScope string         // 闸 2 入口；空字符串 = 任意 PAT 都能调（如 meta.whoami）
 	Handler       mcpToolHandler
 }
 
@@ -253,9 +255,10 @@ func buildToolDescriptors() []mcpToolDescriptor {
 	out := make([]mcpToolDescriptor, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, mcpToolDescriptor{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
+			Name:         t.Name,
+			Description:  t.Description,
+			InputSchema:  t.InputSchema,
+			OutputSchema: t.OutputSchema,
 		})
 	}
 	return out

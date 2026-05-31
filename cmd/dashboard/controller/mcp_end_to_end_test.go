@@ -228,9 +228,10 @@ func setupEndToEnd(t *testing.T) (*httptest.Server, string, func()) {
 	}
 
 	_, plain := mkToken(t, uid, []string{
+		model.ScopeInventoryRead,
+		model.ScopeInventoryDelete,
 		model.ScopeServerRead,
 		model.ScopeServerExec,
-		model.ScopeServerRead,
 		model.ScopeServerWrite,
 		model.ScopeServerDelete,
 	}, nil)
