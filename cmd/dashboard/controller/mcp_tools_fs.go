@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -144,6 +145,12 @@ func handleFsRead(c *gin.Context, raw json.RawMessage) (any, error) {
 	if args.Path == "" {
 		return nil, errMCPInvalidArgs("path required")
 	}
+	if args.Offset < 0 {
+		return nil, errMCPInvalidArgs("offset must be >= 0")
+	}
+	if args.Length < 0 {
+		return nil, errMCPInvalidArgs("length must be >= 0")
+	}
 	out, err := rpc.CallAgent(c.Request.Context(), args.ServerID, model.TaskTypeFsRead,
 		model.FsReadRequest{
 			Path:     args.Path,
@@ -188,6 +195,11 @@ func handleFsWrite(c *gin.Context, raw json.RawMessage) (any, error) {
 	}
 	if args.Path == "" {
 		return nil, errMCPInvalidArgs("path required")
+	}
+	if args.IfMatchSHA256 != "" {
+		if _, decErr := hex.DecodeString(args.IfMatchSHA256); decErr != nil || len(args.IfMatchSHA256) != 64 {
+			return nil, errMCPInvalidArgs("if_match_sha256 must be 64 hex chars")
+		}
 	}
 	out, err := rpc.CallAgent(c.Request.Context(), args.ServerID, model.TaskTypeFsWrite,
 		model.FsWriteRequest{

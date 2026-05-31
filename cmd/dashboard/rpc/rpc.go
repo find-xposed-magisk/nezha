@@ -30,7 +30,14 @@ func SetMCPKillSwitchObserver(fn func() bool) {
 }
 
 func ServeRPC() *grpc.Server {
-	server := grpc.NewServer(grpc.ChainUnaryInterceptor(getRealIp, waf))
+	// Streaming RPCs (RequestTask, IOStream) need the same real-IP + WAF
+	// gate as unary calls; without the stream interceptors authHandler.check
+	// sees an empty real IP, so brute-force BlockIP counters never key on a
+	// source and the WAF block table is bypassed at the stream entrypoint.
+	server := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(getRealIp, waf),
+		grpc.ChainStreamInterceptor(getRealIpStream, wafStream),
+	)
 	rpcService.NezhaHandlerSingleton = rpcService.NewNezhaHandler()
 	// Install the IOStream revocation hook so ServerTransferShared can tear
 	// down terminal/FM/NAT sessions held by the previous owner on every
@@ -40,15 +47,7 @@ func ServeRPC() *grpc.Server {
 	return server
 }
 
-func waf(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	realip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
-	if err := model.CheckIP(singleton.DB, realip); err != nil {
-		return nil, err
-	}
-	return handler(ctx, req)
-}
-
-func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+func ctxWithRealIP(ctx context.Context) (context.Context, error) {
 	var ip, connectingIp string
 	p, ok := peer.FromContext(ctx)
 	if ok {
@@ -60,22 +59,22 @@ func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler
 	ctx = context.WithValue(ctx, model.CtxKeyConnectingIP{}, connectingIp)
 
 	if singleton.Conf.AgentRealIPHeader == "" {
-		return handler(ctx, req)
+		return ctx, nil
 	}
 
 	if singleton.Conf.AgentRealIPHeader == model.ConfigUsePeerIP {
 		if connectingIp == "" {
-			return nil, fmt.Errorf("connecting ip not found")
+			return ctx, fmt.Errorf("connecting ip not found")
 		}
 	} else {
 		vals := metadata.ValueFromIncomingContext(ctx, singleton.Conf.AgentRealIPHeader)
 		if len(vals) == 0 {
-			return nil, fmt.Errorf("real ip header not found")
+			return ctx, fmt.Errorf("real ip header not found")
 		}
 		var err error
 		ip, err = utils.GetIPFromHeader(vals[0])
 		if err != nil {
-			return nil, err
+			return ctx, err
 		}
 	}
 
@@ -83,8 +82,48 @@ func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler
 		log.Printf("NEZHA>> gRPC Agent Real IP: %s, connecting IP: %s\n", ip, connectingIp)
 	}
 
-	ctx = context.WithValue(ctx, model.CtxKeyRealIP{}, ip)
+	return context.WithValue(ctx, model.CtxKeyRealIP{}, ip), nil
+}
+
+func waf(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	realip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
+	if err := model.CheckIP(singleton.DB, realip); err != nil {
+		return nil, err
+	}
 	return handler(ctx, req)
+}
+
+func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	ctx, err := ctxWithRealIP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+// realIPServerStream overrides Context() so stream handlers and
+// authHandler.check observe the resolved real IP, like the unary path.
+type realIPServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *realIPServerStream) Context() context.Context { return s.ctx }
+
+func getRealIpStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	ctx, err := ctxWithRealIP(ss.Context())
+	if err != nil {
+		return err
+	}
+	return handler(srv, &realIPServerStream{ServerStream: ss, ctx: ctx})
+}
+
+func wafStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	realip, _ := ss.Context().Value(model.CtxKeyRealIP{}).(string)
+	if err := model.CheckIP(singleton.DB, realip); err != nil {
+		return err
+	}
+	return handler(srv, ss)
 }
 
 func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
