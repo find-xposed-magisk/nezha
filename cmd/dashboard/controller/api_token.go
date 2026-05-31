@@ -18,8 +18,8 @@ import (
 
 const (
 	apiTokenSecretLength    = 32                          // 明文 token 随机部分长度（hex 编码前）
-	apiTokenCtxKey          = "nz_api_token"              // gin context 里存 *model.APIToken 的 key
-	apiTokenLastUsedCtxKey  = "nz_api_token_used_marker"  // 标记是否需要异步更新 last_used
+	apiTokenCtxKey          = "nz_api_token"              // #nosec G101 -- gin context key name, not a credential
+	apiTokenLastUsedCtxKey  = "nz_api_token_used_marker"  // #nosec G101 -- gin context key name, not a credential
 	apiTokenAuthSchemePrefix = "Bearer "
 )
 
