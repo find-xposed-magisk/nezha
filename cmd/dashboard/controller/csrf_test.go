@@ -39,6 +39,7 @@ func TestCSRFMiddleware_AllowsSafeMethodsWithoutToken(t *testing.T) {
 // POST — would 403 forever and force a manual re-login. GET carries no CSRF
 // risk, so the middleware mints the cookie when it is absent.
 func TestCSRFMiddleware_SeedsCookieOnSafeMethodWhenMissing(t *testing.T) {
+	withCSRFSecret(t, "test-jwt-secret")
 	mw := csrfMiddleware()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -90,6 +91,8 @@ func TestCSRFMiddleware_BlocksUnsafeMethodWithoutToken(t *testing.T) {
 }
 
 func TestCSRFMiddleware_AcceptsMatchingHeaderAndCookie(t *testing.T) {
+	withCSRFSecret(t, "test-jwt-secret")
+	token := issueCSRFToken()
 	mw := csrfMiddleware()
 	for _, m := range []string{"POST", "PATCH", "PUT", "DELETE"} {
 		t.Run(m, func(t *testing.T) {
@@ -97,11 +100,11 @@ func TestCSRFMiddleware_AcceptsMatchingHeaderAndCookie(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(m, "/api/v1/profile", nil)
 			c.Request.AddCookie(&http.Cookie{Name: "nz-jwt", Value: "anything"})
-			c.Request.AddCookie(&http.Cookie{Name: "nz-csrf", Value: "matching-token"})
-			c.Request.Header.Set("X-CSRF-Token", "matching-token")
+			c.Request.AddCookie(&http.Cookie{Name: "nz-csrf", Value: token})
+			c.Request.Header.Set("X-CSRF-Token", token)
 			mw(c)
 			if c.IsAborted() {
-				t.Fatalf("%s with matching csrf header+cookie must pass", m)
+				t.Fatalf("%s with matching signed csrf header+cookie must pass", m)
 			}
 		})
 	}

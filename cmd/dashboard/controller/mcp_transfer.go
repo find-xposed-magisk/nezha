@@ -40,7 +40,7 @@ import (
 // 安全机制：
 //   - 一次性 token，存内存 sync.Map，TTL 默认 300s，最多 600s
 //   - token 绑定 user_id + token_id + server_id + path + direction
-//   - 走 HMAC-SHA256 防篡改
+//   - consume 时重算并以常数时间比对 entry 的 HMAC-SHA256，防篡改
 //   - 命中后立即从内存删除，禁止重放
 //   - revalidateTransferEntry 在 consume 时重新校验 PAT/scope/owner，应对
 //     mint→consume 之间的权限变化
@@ -53,6 +53,11 @@ const (
 
 	transferTokenTTLDefault = 300 * time.Second
 	transferTokenTTLMax     = 600 * time.Second
+
+	// maxTransferDuration bounds a single upload/download once the agent has
+	// attached. 100MiB over a slow link still completes well within this;
+	// anything longer is treated as a stalled/abusive transfer and cancelled.
+	maxTransferDuration = 10 * time.Minute
 
 	maxTransferPathLen = 4096
 )
@@ -105,16 +110,20 @@ func transferHMACSecret() string {
 	return transferSecretVal
 }
 
+// transferTokenSig 计算 entry 的 HMAC-SHA256 签名（hex）；mint 与 consume 共用。
+func transferTokenSig(e transferEntry) string {
+	mac := hmac.New(sha256.New, []byte(transferHMACSecret()))
+	fmt.Fprintf(mac, "%s|%d|%d|%d|%s|%d",
+		e.Direction, e.UserID, e.TokenID, e.ServerID, e.Path, e.ExpiresAt.UnixNano())
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func mintTransferToken(e transferEntry) (string, error) {
 	id, err := utils.GenerateRandomString(24)
 	if err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, []byte(transferHMACSecret()))
-	fmt.Fprintf(mac, "%s|%d|%d|%d|%s|%d",
-		e.Direction, e.UserID, e.TokenID, e.ServerID, e.Path, e.ExpiresAt.UnixNano())
-	sig := hex.EncodeToString(mac.Sum(nil))
-	tok := id + "." + sig
+	tok := id + "." + transferTokenSig(e)
 	transferEntries.Store(tok, e)
 	return tok, nil
 }
@@ -125,6 +134,16 @@ func consumeTransferToken(tok string, dir transferDirection) (*transferEntry, er
 		return nil, errors.New("invalid or already-used transfer token")
 	}
 	e, _ := raw.(transferEntry)
+	// 校验 HMAC：token 形如 id.sig，sig 必须等于 entry 字段在进程 secret 下的
+	// HMAC-SHA256。仅靠 sync.Map key 随机性不构成完整性保护——一旦 entry 被
+	// 持久化/跨副本共享/从 token 解码，缺这一步即认证绕过。常数时间比较防侧信道。
+	idx := strings.LastIndex(tok, ".")
+	if idx < 0 {
+		return nil, errors.New("malformed transfer token")
+	}
+	if !hmac.Equal([]byte(tok[idx+1:]), []byte(transferTokenSig(e))) {
+		return nil, errors.New("transfer token signature mismatch")
+	}
 	if e.Direction != dir {
 		return nil, errors.New("transfer token direction mismatch")
 	}
@@ -263,8 +282,10 @@ func handleFsUploadURL(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := decodeToolArgs(raw, &args); err != nil {
 		return nil, err
 	}
-	if args.IfMatchSHA256 != "" && len(args.IfMatchSHA256) != 64 {
-		return nil, errMCPInvalidArgs("if_match_sha256 must be 64 hex chars")
+	if args.IfMatchSHA256 != "" {
+		if _, decErr := hex.DecodeString(args.IfMatchSHA256); decErr != nil || len(args.IfMatchSHA256) != 64 {
+			return nil, errMCPInvalidArgs("if_match_sha256 must be 64 hex chars")
+		}
 	}
 	return mintTransferTool(c, args.ServerID, args.Path, args.TTLSeconds, transferDirUpload, transferEntry{
 		UploadMode:          args.Mode,
@@ -339,7 +360,14 @@ func mintTransferTool(c *gin.Context, serverID uint64, path string, ttlSeconds i
 // 该 PAT 被 deleteAPIToken 撤销时取消，从而切断已开始的 upload/download；
 // 否则只在传输自然结束时由 stop() 注销。stop() 必须 defer 调用。
 func transferRevokableContext(c *gin.Context, e *transferEntry) (context.Context, func()) {
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	// Cap the whole transfer with a hard deadline. After the agent attaches,
+	// the relay blocks in IOStreamWrapper.Read, which only honours this ctx
+	// (openFsTransferStream closes the stream on ctx.Done). Without the
+	// deadline a stalled or malicious agent that attaches but never sends a
+	// complete header/chunk/final frame pins this goroutine, the IOStream and
+	// the spool tmpfile until the client disconnects, allowing concurrent
+	// hung transfers to exhaust resources within the rate limit.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), maxTransferDuration)
 	dereg := patConnectionRegistryShared.register(e.TokenID, cancel)
 	return ctx, func() {
 		dereg()
@@ -676,7 +704,14 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) 
 		}
 		chunkLen := binary.BigEndian.Uint64(header[4:12])
 		if chunkLen == 0 {
-			continue
+			// A zero-length data frame makes no progress toward `remaining`.
+			// Treating it as a no-op `continue` lets a malicious or buggy
+			// agent stream an unbounded run of zero-length NZTC frames,
+			// pinning this goroutine, the gRPC stream and the spool tmpfile
+			// forever (the final NZTO is never reached). Reject it: a real
+			// transfer that still owes bytes never needs an empty data frame.
+			c.String(http.StatusBadGateway, "stream relay failed: zero-length data frame while payload incomplete")
+			return errMCPMidstreamAbort
 		}
 		if int64(chunkLen) > remaining {
 			c.String(http.StatusBadGateway, "agent oversent: more data bytes than declared size")
@@ -980,6 +1015,13 @@ func revalidateTransferEntry(e *transferEntry) error {
 	}
 	var tok model.APIToken
 	if err := singleton.DB.First(&tok, e.TokenID).Error; err != nil {
+		return errors.New("originating api token no longer exists")
+	}
+	// Bind the reloaded token back to the minting user. If the original PAT
+	// was deleted and its numeric primary key reused by a different user's
+	// token, the row would still load here; without this check the stale
+	// one-time URL would be revalidated against an unrelated token.
+	if tok.UserID != e.UserID {
 		return errors.New("originating api token no longer exists")
 	}
 	if tok.IsExpired(time.Now()) {
