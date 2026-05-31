@@ -3,6 +3,7 @@ package singleton
 import (
 	"cmp"
 	"fmt"
+	"log"
 	"slices"
 
 	"github.com/libdns/cloudflare"
@@ -56,12 +57,30 @@ func (c *DDNSClass) Delete(idList []uint64) {
 	c.sortList()
 }
 
-func (c *DDNSClass) GetDDNSProvidersFromProfiles(profileId []uint64, ip *model.IP) ([]*ddns2.Provider, error) {
+// profileOwnedByRealAdmin reports whether uid is a genuine admin user that
+// may share its DDNS profiles globally. userIsAdmin(0) returns true as a
+// "system resource" shortcut, but a profile with UserID==0 is a migration /
+// default-value artifact, not an admin grant — sharing it with foreign server
+// owners reopens GHSA-39g2-8x68-pmx8. A real admin always has a non-zero ID.
+func profileOwnedByRealAdmin(uid uint64) bool {
+	return uid != 0 && userIsAdmin(uid)
+}
+
+// GHSA-39g2-8x68-pmx8: bind-time CheckPermission 对「不存在的 profile ID」放行，
+// 攻击者可预绑定将来才会被受害者创建的自增 ID。worker 解析时必须按 ownerUID
+// 重新校验归属，跳过非 server owner（且非管理员）所有的 profile。
+func (c *DDNSClass) GetDDNSProvidersFromProfiles(profileId []uint64, ip *model.IP, ownerUID uint64) ([]*ddns2.Provider, error) {
 	profiles := make([]*model.DDNSProfile, 0, len(profileId))
 
 	c.listMu.RLock()
 	for _, id := range profileId {
 		if profile, ok := c.list[id]; ok {
+			if profile.UserID != ownerUID && !profileOwnedByRealAdmin(profile.UserID) {
+				// Fail-closed skip: an admin may bind a member-owned profile,
+				// but worker-time only runs same-owner or real-admin profiles.
+				log.Printf("NEZHA>> Skipping DDNS profile %d (owner %d) for server owner %d: not owned by server owner or a real admin", profile.ID, profile.UserID, ownerUID)
+				continue
+			}
 			profiles = append(profiles, profile)
 		} else {
 			c.listMu.RUnlock()

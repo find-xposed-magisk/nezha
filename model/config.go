@@ -54,6 +54,11 @@ type ConfigDashboard struct {
 
 	EnableMCP bool `koanf:"enable_mcp" json:"enable_mcp,omitempty"` // 是否启用 MCP 入口（默认关闭；启用前请审视 PAT scope/whitelist）
 
+	// GHSA-x6fg-52vr-hj4w：反代部署下 dashboard 的对外域名进程自身看不到，
+	// InstallHost/ListenHost 无法覆盖。运维在此用逗号分隔声明这些对外 host，
+	// 成员便无法注册与之冲突的 NAT 域名抢占路由。
+	ReservedHosts string `koanf:"reserved_hosts" json:"reserved_hosts,omitempty"`
+
 	// IP变更提醒
 	EnableIPChangeNotification  bool   `koanf:"enable_ip_change_notification" json:"enable_ip_change_notification,omitempty"`
 	IPChangeNotificationGroupID uint64 `koanf:"ip_change_notification_group_id" json:"ip_change_notification_group_id"`
