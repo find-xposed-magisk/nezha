@@ -66,6 +66,9 @@ func ctxWithRealIP(ctx context.Context) (context.Context, error) {
 		if connectingIp == "" {
 			return ctx, fmt.Errorf("connecting ip not found")
 		}
+		// Peer-IP mode: peer IP is the real IP. Leaving ip="" makes
+		// CheckIP/BlockIP short-circuit on empty IP, disabling the WAF.
+		ip = connectingIp
 	} else {
 		vals := metadata.ValueFromIncomingContext(ctx, singleton.Conf.AgentRealIPHeader)
 		if len(vals) == 0 {
