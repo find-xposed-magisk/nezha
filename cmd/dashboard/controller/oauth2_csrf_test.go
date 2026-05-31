@@ -12,6 +12,7 @@ import (
 // it so OAuth-only sessions can satisfy the double-submit CSRF gate.
 func TestSetCSRFCookieIssuesReadableToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	withCSRFSecret(t, "test-jwt-secret")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/", nil)

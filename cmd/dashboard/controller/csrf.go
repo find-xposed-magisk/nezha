@@ -1,28 +1,79 @@
 package controller
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/service/singleton"
 )
 
-// setCSRFCookie issues a fresh CSRF token cookie. Called by login + refresh
-// handlers so the frontend always has a paired value to mirror back into
-// the X-CSRF-Token header. The cookie is intentionally HttpOnly=false —
+// issueCSRFToken mints a signed double-submit token (nonce.HMAC-SHA256 keyed
+// by the JWT secret). Signing defeats sibling-subdomain cookie tossing: a
+// naive double-submit trusts any header==cookie pair, but an injected cookie
+// carries no valid HMAC and fails validateCSRFToken. Returns "" pre-init
+// (no secret); callers treat that as "no cookie minted".
+func issueCSRFToken() string {
+	secret := csrfSigningSecret()
+	if secret == "" {
+		return ""
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	nonce := hex.EncodeToString(b[:])
+	return nonce + "." + csrfSign(nonce, secret)
+}
+
+func csrfSigningSecret() string {
+	if singleton.Conf == nil {
+		return ""
+	}
+	return singleton.Conf.JWTSecretKey
+}
+
+func csrfSign(nonce, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(nonce))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// validateCSRFToken reports whether value is a well-formed nonce.signature
+// pair whose signature verifies under the current server secret. Constant
+// -time comparison guards against signature-probing side channels.
+func validateCSRFToken(value string) bool {
+	secret := csrfSigningSecret()
+	if secret == "" || value == "" {
+		return false
+	}
+	idx := strings.LastIndex(value, ".")
+	if idx <= 0 || idx == len(value)-1 {
+		return false
+	}
+	nonce, sig := value[:idx], value[idx+1:]
+	return hmac.Equal([]byte(sig), []byte(csrfSign(nonce, secret)))
+}
+
+// setCSRFCookie issues a fresh signed CSRF token cookie. Called by login +
+// refresh handlers so the frontend always has a paired value to mirror back
+// into the X-CSRF-Token header. The cookie is intentionally HttpOnly=false —
 // SPA JS must be able to read it. SameSite=Strict here (not Lax) because
 // the cookie's sole purpose is the same-origin double-submit check and we
 // don't want it leaking on cross-site GET navigation either.
 func setCSRFCookie(c *gin.Context) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	token := issueCSRFToken()
+	if token == "" {
 		return
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie(csrfCookieName, hex.EncodeToString(b[:]), 0, "/", "", false, false)
+	c.SetCookie(csrfCookieName, token, 0, "/", "", false, false)
 }
 
 const (
@@ -49,6 +100,7 @@ const (
 //   - Missing or empty X-CSRF-Token header.
 //   - Missing or empty nz-csrf cookie.
 //   - Header value != cookie value.
+//   - Cookie value not signed by the server (validateCSRFToken fails).
 //
 // The middleware DOES NOT set the csrf cookie on its own — that is the
 // JWT login / refresh handler's job, since those are the only places that
@@ -77,7 +129,10 @@ func csrfMiddleware() gin.HandlerFunc {
 		}
 		header := c.GetHeader(csrfHeaderName)
 		cookie, err := c.Cookie(csrfCookieName)
-		if err != nil || cookie == "" || header == "" || header != cookie {
+		// Both halves must be present, mirror each other, AND carry a valid
+		// server signature. The signature check is what stops a cookie-tossed
+		// pair from a sibling subdomain.
+		if err != nil || cookie == "" || header == "" || header != cookie || !validateCSRFToken(cookie) {
 			c.AbortWithStatusJSON(http.StatusForbidden, model.CommonResponse[any]{
 				Success: false,
 				Error:   "ApiErrorForbidden: missing or invalid CSRF token",
