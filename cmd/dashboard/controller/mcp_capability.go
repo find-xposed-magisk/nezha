@@ -27,13 +27,12 @@ func requireAgentSupportsMCP(server *model.Server) error {
 	return nil
 }
 
-// compareSemver 比较两个 "MAJOR.MINOR.PATCH[-suffix]" 字符串。
-// 返回 -1/0/1。无法解析时按字符串字典序比较，保证全序但可能不精确——
-// 对于 "agent 太老" 的快速失败用途已经足够。
+// compareSemver 比较两个 "MAJOR.MINOR.PATCH[-suffix]" 字符串，返回 -1/0/1。
+// semverParts 已剥掉可选的 "v" 前缀与 "-/+" 后缀，所以只按三段数字定序：
+// 数字段相等即视为相等版本。绝不能回退到字符串字典序——agent 上报 "2.1.0"
+// 而门槛常量是 "v2.1.0"，'2'(0x32) < 'v'(0x76) 会把相等版本误判为更旧，
+// 导致所有 agent 被错误地判为不支持 MCP。
 func compareSemver(a, b string) int {
-	if a == b {
-		return 0
-	}
 	aparts := semverParts(a)
 	bparts := semverParts(b)
 	for i := 0; i < 3; i++ {
@@ -43,12 +42,6 @@ func compareSemver(a, b string) int {
 		if aparts[i] > bparts[i] {
 			return 1
 		}
-	}
-	if a < b {
-		return -1
-	}
-	if a > b {
-		return 1
 	}
 	return 0
 }

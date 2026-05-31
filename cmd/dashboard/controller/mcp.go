@@ -327,13 +327,12 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 			})
 			return
 		}
+		// 错误结果不带 structuredContent：严格客户端会拿它去校验工具声明的
+		// outputSchema（要求 exit_code/stdout/... 等成功字段），缺字段就整条
+		// 响应报 -32602，把真正的 isError 文本掩盖掉。错误信息走 content[].text。
 		writeJSONRPCResult(c, req.ID, mcpToolCallResult{
 			Content: []mcpContent{{Type: "text", Text: errMsg}},
 			IsError: true,
-			StructuredContent: map[string]string{
-				"error_code": errCode,
-				"error":      errMsg,
-			},
 		})
 	}
 

@@ -50,3 +50,28 @@ func TestRequireAgentSupportsMCPDefersWhenAgentNeverReported(t *testing.T) {
 	require.NoError(t, requireAgentSupportsMCP(&model.Server{Host: nil}),
 		"Host==nil means agent never reported its build; defer the version decision to the CallAgent timeout layer")
 }
+
+func TestCompareSemverIgnoresVPrefixMismatch(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"2.1.0", "v2.1.0", 0},
+		{"v2.1.0", "2.1.0", 0},
+		{"2.1.0", "2.1.0", 0},
+		{"2.1.0", "v2.1.1", -1},
+		{"v2.1.2", "2.1.0", 1},
+		{"2.2.0", "v2.1.9", 1},
+	}
+	for _, c := range cases {
+		require.Equalf(t, c.want, compareSemver(c.a, c.b),
+			"compareSemver(%q,%q): the only difference is the optional 'v' prefix and/or numeric ordering; "+
+				"a bare lexical fallback wrongly orders %q < %q", c.a, c.b, c.a, c.b)
+	}
+}
+
+func TestRequireAgentSupportsMCPAcceptsBarePrefixReport(t *testing.T) {
+	agent := &model.Server{Host: &model.Host{Version: "2.1.0"}}
+	require.NoError(t, requireAgentSupportsMCP(agent),
+		"agents report Host.Version without the 'v' prefix (e.g. \"2.1.0\"); it must compare equal to MCPMinAgentVersion \"v2.1.0\" and be accepted")
+}
