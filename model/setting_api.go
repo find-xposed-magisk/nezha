@@ -8,6 +8,7 @@ type SettingForm struct {
 	SiteName                    string `json:"site_name,omitempty" minLength:"1"`
 	Language                    string `json:"language,omitempty" minLength:"2"`
 	InstallHost                 string `json:"install_host,omitempty" validate:"optional"`
+	ReservedHosts               string `json:"reserved_hosts,omitempty" validate:"optional"`
 	CustomCode                  string `json:"custom_code,omitempty" validate:"optional"`
 	CustomCodeDashboard         string `json:"custom_code_dashboard,omitempty" validate:"optional"`
 	WebRealIPHeader             string `json:"web_real_ip_header,omitempty" validate:"optional"`   // 前端真实IP

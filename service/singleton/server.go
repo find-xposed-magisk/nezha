@@ -126,7 +126,7 @@ func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
 	confServers := strings.Split(Conf.DNSServers, ",")
 	ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(confServers[0] != "", confServers, utils.DNSServers))
 
-	providers, err := DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP))
+	providers, err := DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP), server.GetUserID())
 	if err != nil {
 		return err
 	}

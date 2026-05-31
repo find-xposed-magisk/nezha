@@ -64,6 +64,10 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	if singleton.IsReservedDashboardHost(nf.Domain) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	uid := getUid(c)
 
 	n.UserID = uid
@@ -114,6 +118,10 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("have invalid server id")
 	}
 	if !server.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	if singleton.IsReservedDashboardHost(nf.Domain) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
