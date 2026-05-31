@@ -51,6 +51,19 @@ func init() {
 			},
 			"required": []string{"server_id", "cmd"},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"exit_code":        map[string]any{"type": "integer"},
+				"stdout":           map[string]any{"type": "string"},
+				"stderr":           map[string]any{"type": "string"},
+				"duration_ms":      map[string]any{"type": "integer"},
+				"stdout_truncated": map[string]any{"type": "boolean"},
+				"stderr_truncated": map[string]any{"type": "boolean"},
+				"timed_out":        map[string]any{"type": "boolean"},
+			},
+			"required": []string{"exit_code", "stdout", "stderr", "duration_ms"},
+		},
 		RequiredScope: model.ScopeServerExec,
 		Handler:       handleServerExec,
 	})

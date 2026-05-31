@@ -20,14 +20,14 @@ func setupRESTScopeServer(t *testing.T) (*httptest.Server, string, func()) {
 	t.Helper()
 	cleanupBase, uid := setupMCPTest(t)
 
-	_, plain := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	_, plain := mkToken(t, uid, []string{model.ScopeInventoryRead}, nil)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	pat := apiTokenAuthMiddleware()
 	r.GET("/api/v1/server",
 		pat,
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	r.POST("/api/v1/server/config",
@@ -122,7 +122,7 @@ func TestRESTScope_JWTUserSkipsScope(t *testing.T) {
 			c.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: uid}, Role: model.RoleMember})
 			c.Next()
 		},
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	ts := httptest.NewServer(r)
@@ -148,7 +148,7 @@ func TestRESTScope_NezhaAllUnlocksEverything(t *testing.T) {
 	)
 	r.POST("/api/v1/batch-delete/server",
 		pat,
-		restScopeMiddleware(model.ScopeServerDelete),
+		restScopeMiddleware(model.ScopeInventoryDelete),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	ts := httptest.NewServer(r)
@@ -193,7 +193,7 @@ func TestRESTScope_GoodPATClearsWAFCounter(t *testing.T) {
 	cleanupBase, uid := setupMCPTest(t)
 	defer cleanupBase()
 
-	_, plain := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	_, plain := mkToken(t, uid, []string{model.ScopeInventoryRead}, nil)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -203,7 +203,7 @@ func TestRESTScope_GoodPATClearsWAFCounter(t *testing.T) {
 	})
 	r.GET("/api/v1/server",
 		apiTokenAuthMiddleware(),
-		restScopeMiddleware(model.ScopeServerRead),
+		restScopeMiddleware(model.ScopeInventoryRead),
 		func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) },
 	)
 	ts := httptest.NewServer(r)

@@ -30,6 +30,33 @@ type serverListArgs struct {
 	OnlineOnly bool `json:"online_only,omitempty"`
 }
 
+// serverListResult 是 server.list 的返回外壳。MCP 2025-06-18 规定
+// structuredContent 必须是 JSON object，不能是裸数组/标量，否则严格客户端
+// （官方 TS/Python SDK）会拒绝整条 tools/call 结果。因此这里把列表包进对象，
+// 不再直接返回 []serverListItem。
+type serverListResult struct {
+	Servers []serverListItem `json:"servers"`
+	Count   int              `json:"count"`
+}
+
+func serverListItemSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":          map[string]any{"type": "integer"},
+			"name":        map[string]any{"type": "string"},
+			"uuid":        map[string]any{"type": "string"},
+			"ipv4":        map[string]any{"type": "string"},
+			"ipv6":        map[string]any{"type": "string"},
+			"online":      map[string]any{"type": "boolean"},
+			"platform":    map[string]any{"type": "string"},
+			"arch":        map[string]any{"type": "string"},
+			"last_active": map[string]any{"type": "string", "format": "date-time"},
+		},
+		"required": []string{"id", "name", "online"},
+	}
+}
+
 func init() {
 	registerMCPTool(&mcpTool{
 		Name:        "server.list",
@@ -43,14 +70,40 @@ func init() {
 				},
 			},
 		},
-		RequiredScope: model.ScopeServerRead,
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"servers": map[string]any{
+					"type":  "array",
+					"items": serverListItemSchema(),
+				},
+				"count": map[string]any{"type": "integer"},
+			},
+			"required": []string{"servers", "count"},
+		},
+		RequiredScope: model.ScopeInventoryRead,
 		Handler:       handleServerList,
 	})
 
 	registerMCPTool(&mcpTool{
-		Name:          "server.get",
-		Description:   "Return full Host/State snapshot for a single server.",
-		InputSchema:   serverGetSchema(),
+		Name:        "server.get",
+		Description: "Return full Host/State snapshot for a single server.",
+		InputSchema: serverGetSchema(),
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":          map[string]any{"type": "integer"},
+				"name":        map[string]any{"type": "string"},
+				"uuid":        map[string]any{"type": "string"},
+				"note":        map[string]any{"type": "string"},
+				"public_note": map[string]any{"type": "string"},
+				"host":        map[string]any{"type": "object"},
+				"state":       map[string]any{"type": "object"},
+				"geoip":       map[string]any{"type": "object"},
+				"last_active": map[string]any{"type": "string", "format": "date-time"},
+			},
+			"required": []string{"id"},
+		},
 		RequiredScope: model.ScopeServerRead,
 		Handler:       handleServerGet,
 	})
@@ -104,7 +157,7 @@ func handleServerList(c *gin.Context, raw json.RawMessage) (any, error) {
 		}
 		out = append(out, item)
 	}
-	return out, nil
+	return serverListResult{Servers: out, Count: len(out)}, nil
 }
 
 // server.get

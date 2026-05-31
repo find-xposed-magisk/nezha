@@ -32,25 +32,25 @@ type scopedRoute struct {
 
 func canonicalRoutes() []scopedRoute {
 	return []scopedRoute{
-		{"GET", "/api/v1/server", "nezha:server:read"},
+		{"GET", "/api/v1/server", "nezha:inventory:read"},
 		{"PATCH", "/api/v1/server/{id}", "nezha:server:write"},
 		{"GET", "/api/v1/server/config/{id}", "nezha:server:write"},
 		{"POST", "/api/v1/server/config", "nezha:server:write"},
-		{"POST", "/api/v1/batch-delete/server", "nezha:server:delete"},
+		{"POST", "/api/v1/batch-delete/server", "nezha:inventory:delete"},
 		{"POST", "/api/v1/batch-move/server", "nezha:server:write"},
 		{"POST", "/api/v1/force-update/server", "nezha:server:write"},
 		{"POST", "/api/v1/server-group", "nezha:server:write"},
 		{"PATCH", "/api/v1/server-group/{id}", "nezha:server:write"},
-		{"POST", "/api/v1/batch-delete/server-group", "nezha:server:delete"},
+		{"POST", "/api/v1/batch-delete/server-group", "nezha:inventory:delete"},
 		{"POST", "/api/v1/terminal", "nezha:server:exec"},
 		{"GET", "/api/v1/ws/terminal/{id}", "nezha:server:exec"},
-		{"POST", "/api/v1/file", "nezha:server:write"},
-		{"GET", "/api/v1/ws/file/{id}", "nezha:server:write"},
+		{"POST", "/api/v1/file", "nezha:server:read+write+delete"},
+		{"GET", "/api/v1/ws/file/{id}", "nezha:server:read+write+delete"},
 		// optional-auth scoped routes（controller.go:91-98）。这些 GET 端点既支持
 		// 未登录访客，也接受 PAT；当走 PAT 路径时 restScopeMiddleware 会强制对应的
 		// read scope。漏掉这一段会让 scope_doc.go 与实际 router 漂移而测试不报错。
-		{"GET", "/api/v1/ws/server", "nezha:server:read"},
-		{"GET", "/api/v1/server-group", "nezha:server:read"},
+		{"GET", "/api/v1/ws/server", "nezha:inventory:read"},
+		{"GET", "/api/v1/server-group", "nezha:inventory:read"},
 		{"GET", "/api/v1/service", "nezha:service:read"},
 		{"GET", "/api/v1/service/server", "nezha:service:read"},
 		{"GET", "/api/v1/service/{id}/history", "nezha:service:read"},

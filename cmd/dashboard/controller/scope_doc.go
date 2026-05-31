@@ -11,9 +11,13 @@
 // # Scope naming
 //
 //	nezha:{resource}:{verb}
-//	  resource: server | service | alertrule | cron | ddns | nat |
+//	  resource: inventory | server | service | alertrule | cron | ddns | nat |
 //	            notification | notification-group | transfer | admin
 //	  verb:     read | write | delete | exec
+//
+//	inventory vs server：inventory 管“能看到/能删哪些机器”（列出 server /
+//	server-group、删除 server / server-group、MCP server.list）；server 管对
+//	已知机器的运行态操作（exec / 文件读写 / 编辑配置 / metrics / server.get）。
 //
 //	nezha:*               Admin-only superuser
 //	nezha:admin:*         Admin-only user/waf/setting/online-user management
@@ -22,7 +26,7 @@
 // # MCP tools (POST /mcp tools/call)
 //
 //	meta.whoami           — (any scope)
-//	server.list           nezha:server:read
+//	server.list           nezha:inventory:read
 //	server.get            nezha:server:read
 //	server.exec           nezha:server:exec
 //	fs.list               nezha:server:read
@@ -34,22 +38,22 @@
 //
 // # REST endpoints (PAT required scope)
 //
-//	GET    /api/v1/server                            nezha:server:read
+//	GET    /api/v1/server                            nezha:inventory:read
 //	PATCH  /api/v1/server/{id}                       nezha:server:write
 //	GET    /api/v1/server/config/{id}                nezha:server:write
 //	POST   /api/v1/server/config                     nezha:server:write
-//	POST   /api/v1/batch-delete/server               nezha:server:delete
+//	POST   /api/v1/batch-delete/server               nezha:inventory:delete
 //	POST   /api/v1/batch-move/server                 nezha:server:write
 //	POST   /api/v1/force-update/server               nezha:server:write
 //	POST   /api/v1/server-group                      nezha:server:write
 //	PATCH  /api/v1/server-group/{id}                 nezha:server:write
-//	POST   /api/v1/batch-delete/server-group         nezha:server:delete
+//	POST   /api/v1/batch-delete/server-group         nezha:inventory:delete
 //	POST   /api/v1/terminal                          nezha:server:exec
 //	GET    /api/v1/ws/terminal/{id}                  nezha:server:exec
-//	POST   /api/v1/file                              nezha:server:write
-//	GET    /api/v1/ws/file/{id}                      nezha:server:write
-//	GET    /api/v1/ws/server                         nezha:server:read
-//	GET    /api/v1/server-group                      nezha:server:read
+//	POST   /api/v1/file                              nezha:server:read+write+delete
+//	GET    /api/v1/ws/file/{id}                      nezha:server:read+write+delete
+//	GET    /api/v1/ws/server                         nezha:inventory:read
+//	GET    /api/v1/server-group                      nezha:inventory:read
 //	GET    /api/v1/service                           nezha:service:read
 //	GET    /api/v1/service/server                    nezha:service:read
 //	GET    /api/v1/service/{id}/history              nezha:service:read

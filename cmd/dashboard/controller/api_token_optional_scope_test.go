@@ -24,7 +24,7 @@ func setupOptionalAuthRouter(t *testing.T, plainToken string) *httptest.Server {
 
 	stub := func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) }
 	optionalAuth := r.Group("/api/v1", authMw)
-	optionalAuth.GET("/server-group", restScopeMiddleware(model.ScopeServerRead), stub)
+	optionalAuth.GET("/server-group", restScopeMiddleware(model.ScopeInventoryRead), stub)
 	optionalAuth.GET("/service", restScopeMiddleware(model.ScopeServiceRead), stub)
 	optionalAuth.GET("/server/:id/metrics", restScopeMiddleware(model.ScopeServerRead), stub)
 
@@ -56,7 +56,7 @@ func TestOptionalAuth_PATWithMatchingScopeAllowed(t *testing.T) {
 	cleanup, uid := setupMCPTest(t)
 	defer cleanup()
 
-	_, plain := mkToken(t, uid, []string{model.ScopeServerRead, model.ScopeServiceRead}, nil)
+	_, plain := mkToken(t, uid, []string{model.ScopeInventoryRead, model.ScopeServerRead, model.ScopeServiceRead}, nil)
 	ts := setupOptionalAuthRouter(t, plain)
 
 	for _, path := range []string{

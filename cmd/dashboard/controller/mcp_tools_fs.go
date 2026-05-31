@@ -14,6 +14,22 @@ import (
 
 const fsCallTimeout = 30 * time.Second
 
+func fsEntrySchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name":        map[string]any{"type": "string"},
+			"type":        map[string]any{"type": "string"},
+			"size":        map[string]any{"type": "integer"},
+			"mode":        map[string]any{"type": "string"},
+			"mtime":       map[string]any{"type": "integer"},
+			"is_symlink":  map[string]any{"type": "boolean"},
+			"link_target": map[string]any{"type": "string"},
+		},
+		"required": []string{"name", "type", "size", "mode", "mtime"},
+	}
+}
+
 func init() {
 	registerMCPTool(&mcpTool{
 		Name:        "fs.list",
@@ -26,6 +42,15 @@ func init() {
 				"show_hidden": map[string]any{"type": "boolean"},
 			},
 			"required": []string{"server_id", "path"},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entries":   map[string]any{"type": "array", "items": fsEntrySchema()},
+				"truncated": map[string]any{"type": "boolean"},
+				"total":     map[string]any{"type": "integer"},
+			},
+			"required": []string{"entries"},
 		},
 		RequiredScope: model.ScopeServerRead,
 		Handler:       handleFsList,
@@ -44,6 +69,17 @@ func init() {
 				"encoding":  map[string]any{"type": "string", "enum": []string{"utf8", "base64"}},
 			},
 			"required": []string{"server_id", "path"},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"content":   map[string]any{"type": "string"},
+				"encoding":  map[string]any{"type": "string"},
+				"size":      map[string]any{"type": "integer"},
+				"sha256":    map[string]any{"type": "string"},
+				"truncated": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"content", "encoding", "size"},
 		},
 		RequiredScope: model.ScopeServerRead,
 		Handler:       handleFsRead,
@@ -65,6 +101,14 @@ func init() {
 			},
 			"required": []string{"server_id", "path", "content"},
 		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"size":   map[string]any{"type": "integer"},
+				"sha256": map[string]any{"type": "string"},
+			},
+			"required": []string{"size", "sha256"},
+		},
 		RequiredScope: model.ScopeServerWrite,
 		Handler:       handleFsWrite,
 	})
@@ -80,6 +124,13 @@ func init() {
 				"recursive": map[string]any{"type": "boolean"},
 			},
 			"required": []string{"server_id", "path"},
+		},
+		OutputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"deleted_count": map[string]any{"type": "integer"},
+			},
+			"required": []string{"deleted_count"},
 		},
 		RequiredScope: model.ScopeServerDelete,
 		Handler:       handleFsDelete,

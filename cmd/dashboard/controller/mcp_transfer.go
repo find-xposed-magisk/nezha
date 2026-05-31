@@ -245,6 +245,7 @@ func init() {
 			},
 			"required": []string{"server_id", "path"},
 		},
+		OutputSchema:  transferURLOutputSchema(),
 		RequiredScope: model.ScopeServerRead,
 		Handler:       handleFsDownloadURL,
 	})
@@ -264,9 +265,22 @@ func init() {
 			},
 			"required": []string{"server_id", "path"},
 		},
+		OutputSchema:  transferURLOutputSchema(),
 		RequiredScope: model.ScopeServerWrite,
 		Handler:       handleFsUploadURL,
 	})
+}
+
+func transferURLOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"url":        map[string]any{"type": "string"},
+			"method":     map[string]any{"type": "string"},
+			"expires_at": map[string]any{"type": "string", "format": "date-time"},
+		},
+		"required": []string{"url", "method", "expires_at"},
+	}
 }
 
 func handleFsDownloadURL(c *gin.Context, raw json.RawMessage) (any, error) {
