@@ -233,6 +233,21 @@ func TestCreateAPIToken_AdminCanIncludeAnyServerID(t *testing.T) {
 	require.Equal(t, []uint64{77}, res.ServerIDs)
 }
 
+func TestCreateAPIToken_AdminCannotIncludeNonexistentServerID(t *testing.T) {
+	defer setupAPITokenTest(t)()
+	defer installServerForAPIToken(t, 77, 999)() // only server 77 exists
+
+	c := ctxAsUser(1, model.RoleAdmin)
+	bindJSON(c, model.APITokenCreateRequest{
+		Name:      "ops-future-bind",
+		Scopes:    []string{model.ScopeServerRead},
+		ServerIDs: []uint64{4242}, // never-existed server id
+	})
+	_, err := createAPIToken(c)
+	require.Error(t, err, "admin must not bind a PAT to a nonexistent server_id; a later-created server with that id would auto-inherit the grant")
+	require.Contains(t, err.Error(), "server not found")
+}
+
 func TestCreateAPIToken_MemberOwnServerIDIsAccepted(t *testing.T) {
 	defer setupAPITokenTest(t)()
 	defer installServerForAPIToken(t, 55, 10)() // user 10 owns server 55
