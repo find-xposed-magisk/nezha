@@ -17,6 +17,9 @@ import (
 //   - 默认 30s 超时，硬上限 300s
 //   - stdout/stderr 各自最多 64KB（默认），硬上限 1MB
 //   - 受 agent 配置 DisableCommandExecute 影响
+//   - 命令返回或超时时，agent 会回收整个进程组/JobObject：'cmd &'、nohup、
+//     disown 这类普通后台进程都会被一并杀掉。要留长驻进程必须脱离会话
+//     （setsid / screen -dmS / tmux new -d / systemd-run；Windows 需 breakaway）。
 //
 // LLM 要用 shell 特性（管道、重定向）必须显式传 cmd="sh" args=["-c","..."]，
 // 这样审计日志能完整记录被执行的指令。
@@ -36,7 +39,7 @@ type execArgs struct {
 func init() {
 	registerMCPTool(&mcpTool{
 		Name:        "server.exec",
-		Description: "Run a non-interactive command on the target server and return stdout/stderr/exit_code. No pty. Use cmd='sh' args=['-c', '...'] for shell features.",
+		Description: "Run a non-interactive command on the target server and return stdout/stderr/exit_code. No pty. Use cmd='sh' args=['-c', '...'] for shell features. The entire process tree is killed when the command returns or times out, so plain background jobs ('cmd &', nohup, disown) do NOT survive; to leave a process running after the call, fully detach it from the session (e.g. setsid, 'screen -dmS', 'tmux new -d', systemd-run; on Windows it must break away from the job object).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
