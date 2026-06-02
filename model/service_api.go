@@ -14,7 +14,7 @@ type ServiceForm struct {
 	MaxLatency          float32         `json:"max_latency,omitempty" default:"0.0"`
 	LatencyNotify       bool            `json:"latency_notify,omitempty" validate:"optional"`
 	EnableTriggerTask   bool            `json:"enable_trigger_task,omitempty" validate:"optional"`
-	EnableShowInService bool            `json:"enable_show_in_service,omitempty" validate:"optional"`
+	HideForGuest        bool            `json:"hide_for_guest,omitempty" validate:"optional"`
 	FailTriggerTasks    []uint64        `json:"fail_trigger_tasks,omitempty"`
 	RecoverTriggerTasks []uint64        `json:"recover_trigger_tasks,omitempty"`
 	SkipServers         map[uint64]bool `json:"skip_servers,omitempty"`

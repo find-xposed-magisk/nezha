@@ -489,18 +489,16 @@ func userCanViewService(c *gin.Context, service *model.Service) bool {
 	if service == nil {
 		return false
 	}
-	// EnableShowInService 是显式公开旗标：guest 都可看，PAT 白名单不收窄
-	// 公开视图（公开 service 本来就不绑特定 server）。其它分支才走 PAT。
-	if service.EnableShowInService {
-		return true
+	// HideForGuest 默认公开，置 true 才对 guest 隐藏，语义与 Server.HideForGuest 对齐。
+	if service.HideForGuest {
+		if _, isMember := c.Get(model.CtxKeyAuthorizedUser); !isMember {
+			return false
+		}
+		// 必须先让 Service.HasPermission 跑 PAT 白名单收口，再让 admin 在无 PAT 请求上
+		// 短路放行，否则 admin 自签的受限 PAT 会被早返回绕过 list/history 的 PAT 边界。
+		return service.HasPermission(c)
 	}
-	if _, isMember := c.Get(model.CtxKeyAuthorizedUser); !isMember {
-		return false
-	}
-	// 关键：必须先让 Service.HasPermission 跑 PAT 白名单收口，再让 admin
-	// 身份在没有 PAT 的请求上短路放行。否则 admin 自己签发的 server_ids
-	// 受限 PAT 会被 admin 早返回直接放过，绕过 list/history 入口的 PAT 边界。
-	return service.HasPermission(c)
+	return true
 }
 
 func assertOwnsNotificationGroup(c *gin.Context, groupID uint64) error {

@@ -489,7 +489,7 @@ func createService(c *gin.Context) (uint64, error) {
 	m.LatencyNotify = mf.LatencyNotify
 	m.MinLatency = mf.MinLatency
 	m.MaxLatency = mf.MaxLatency
-	m.EnableShowInService = mf.EnableShowInService
+	m.HideForGuest = mf.HideForGuest
 	m.EnableTriggerTask = mf.EnableTriggerTask
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
@@ -558,7 +558,7 @@ func updateService(c *gin.Context) (any, error) {
 	m.LatencyNotify = mf.LatencyNotify
 	m.MinLatency = mf.MinLatency
 	m.MaxLatency = mf.MaxLatency
-	m.EnableShowInService = mf.EnableShowInService
+	m.HideForGuest = mf.HideForGuest
 	m.EnableTriggerTask = mf.EnableTriggerTask
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
