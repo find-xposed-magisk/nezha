@@ -438,7 +438,7 @@ func (ss *ServiceSentinel) CopyStats() map[uint64]model.ServiceResponseItem {
 
 	sri := make(map[uint64]model.ServiceResponseItem)
 	for k, service := range stats {
-		if !service.service.EnableShowInService {
+		if service.service.HideForGuest {
 			delete(stats, k)
 			continue
 		}
