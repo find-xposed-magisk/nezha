@@ -20,29 +20,29 @@ func newServiceVisibilityCtx(viewer *model.User) *gin.Context {
 }
 
 func TestUserCanViewServiceVisibleServiceIsPublic(t *testing.T) {
-	visible := &model.Service{Common: model.Common{ID: 1, UserID: 100}, EnableShowInService: true}
-	assert.True(t, userCanViewService(newServiceVisibilityCtx(nil), visible), "guest must see EnableShowInService=true regardless of owner")
+	visible := &model.Service{Common: model.Common{ID: 1, UserID: 100}, HideForGuest: false}
+	assert.True(t, userCanViewService(newServiceVisibilityCtx(nil), visible), "guest must see HideForGuest=false regardless of owner")
 }
 
 func TestUserCanViewServiceHiddenServiceRejectsGuest(t *testing.T) {
-	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, EnableShowInService: false}
+	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, HideForGuest: true}
 	assert.False(t, userCanViewService(newServiceVisibilityCtx(nil), hidden), "guest must NOT see hidden service via per-server / per-id sideband endpoints")
 }
 
 func TestUserCanViewServiceHiddenServiceRejectsForeignMember(t *testing.T) {
-	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, EnableShowInService: false}
+	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, HideForGuest: true}
 	foreign := &model.User{Common: model.Common{ID: 200}, Role: model.RoleMember}
 	assert.False(t, userCanViewService(newServiceVisibilityCtx(foreign), hidden), "foreign member must NOT see another user's hidden service")
 }
 
 func TestUserCanViewServiceHiddenServiceAllowsOwner(t *testing.T) {
-	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, EnableShowInService: false}
+	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, HideForGuest: true}
 	owner := &model.User{Common: model.Common{ID: 100}, Role: model.RoleMember}
 	assert.True(t, userCanViewService(newServiceVisibilityCtx(owner), hidden), "owner must still see their own hidden service")
 }
 
 func TestUserCanViewServiceHiddenServiceAllowsAdmin(t *testing.T) {
-	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, EnableShowInService: false}
+	hidden := &model.Service{Common: model.Common{ID: 1, UserID: 100}, HideForGuest: true}
 	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
 	assert.True(t, userCanViewService(newServiceVisibilityCtx(admin), hidden), "admin must be able to see any hidden service")
 }
@@ -52,9 +52,10 @@ func TestUserCanViewServiceHiddenServiceAllowsAdmin(t *testing.T) {
 // 保持对称，避免 hidden service 通过 admin 早返回泄漏给受限 PAT。
 func TestUserCanViewServiceLimitedPATShouldDenyAdminWhenOutsideWhitelist(t *testing.T) {
 	hidden := &model.Service{
-		Common:      model.Common{ID: 1, UserID: 100},
-		Cover:       model.ServiceCoverIgnoreAll,
-		SkipServers: map[uint64]bool{2: true},
+		Common:       model.Common{ID: 1, UserID: 100},
+		Cover:        model.ServiceCoverIgnoreAll,
+		SkipServers:  map[uint64]bool{2: true},
+		HideForGuest: true,
 	}
 	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
 	tok := &model.APIToken{ID: 7, UserID: 1}
@@ -69,9 +70,10 @@ func TestUserCanViewServiceLimitedPATShouldDenyAdminWhenOutsideWhitelist(t *test
 
 func TestUserCanViewServiceLimitedPATAllowsAdminInsideWhitelist(t *testing.T) {
 	visible := &model.Service{
-		Common:      model.Common{ID: 2, UserID: 100},
-		Cover:       model.ServiceCoverIgnoreAll,
-		SkipServers: map[uint64]bool{1: true},
+		Common:       model.Common{ID: 2, UserID: 100},
+		Cover:        model.ServiceCoverIgnoreAll,
+		SkipServers:  map[uint64]bool{1: true},
+		HideForGuest: true,
 	}
 	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
 	tok := &model.APIToken{ID: 7, UserID: 1}

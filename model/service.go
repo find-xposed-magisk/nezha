@@ -216,7 +216,7 @@ type Service struct {
 	Cover               uint8  `json:"cover"`
 
 	EnableTriggerTask      bool   `gorm:"default: false" json:"enable_trigger_task,omitempty"`
-	EnableShowInService    bool   `gorm:"default: false" json:"enable_show_in_service,omitempty"`
+	HideForGuest           bool   `json:"hide_for_guest,omitempty"` // 对游客隐藏
 	FailTriggerTasksRaw    string `gorm:"default:'[]'" json:"-"`
 	RecoverTriggerTasksRaw string `gorm:"default:'[]'" json:"-"`
 
