@@ -29,7 +29,7 @@ func IsReservedDashboardHost(domain string) bool {
 		return false
 	}
 
-	hosts := []string{Conf.InstallHost, Conf.ListenHost}
+	hosts := []string{Conf.InstallHost, Conf.DashboardHost, Conf.ListenHost}
 	hosts = append(hosts, strings.Split(Conf.ReservedHosts, ",")...)
 	for _, host := range hosts {
 		if reserved := splitDashboardHostname(host); reserved != "" && reserved == target {

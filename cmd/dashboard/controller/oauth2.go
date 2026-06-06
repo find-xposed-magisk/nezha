@@ -23,10 +23,11 @@ import (
 // provider and is where the authorization code lands. Deriving it from the
 // raw Host header lets an attacker who can reach this handler with a forged
 // Host (or a provider with loose redirect-URI matching) divert a victim's
-// code to their own origin and bind the victim's identity. Only trust the
-// request Host when it is an operator-declared dashboard host (the same
-// allowlist that guards NAT routing); otherwise fall back to the configured
-// InstallHost so a forged Host cannot steer the redirect.
+// code to their own origin and bind the victim's identity. A request Host is
+// trusted only when it is an operator-declared dashboard host (the same
+// allowlist that guards NAT routing). Otherwise the redirect is pinned to the
+// operator-declared DashboardHost; when DashboardHost is empty the operator has
+// not pinned a dashboard origin, so the request Host is passed through.
 func getRedirectURL(c *gin.Context) string {
 	scheme := "http://"
 	referer := c.Request.Referer()
@@ -34,8 +35,8 @@ func getRedirectURL(c *gin.Context) string {
 		scheme = "https://"
 	}
 	host := c.Request.Host
-	if !singleton.IsReservedDashboardHost(host) && singleton.Conf != nil && singleton.Conf.InstallHost != "" {
-		host = singleton.Conf.InstallHost
+	if !singleton.IsReservedDashboardHost(host) && singleton.Conf != nil && singleton.Conf.DashboardHost != "" {
+		host = singleton.Conf.DashboardHost
 	}
 	return scheme + host + "/api/v1/oauth2/callback"
 }

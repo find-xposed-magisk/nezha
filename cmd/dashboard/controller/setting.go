@@ -99,6 +99,7 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
 	singleton.Conf.Cover = sf.Cover
 	singleton.Conf.InstallHost = sf.InstallHost
+	singleton.Conf.DashboardHost = sf.DashboardHost
 	singleton.Conf.ReservedHosts = sf.ReservedHosts
 	singleton.Conf.IgnoredIPNotification = sf.IgnoredIPNotification
 	singleton.Conf.IPChangeNotificationGroupID = sf.IPChangeNotificationGroupID
