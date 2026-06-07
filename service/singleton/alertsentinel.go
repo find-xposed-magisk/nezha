@@ -155,7 +155,7 @@ func checkStatus() {
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.
 				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB))
 			// 发送通知，分为触发报警和恢复通知
-			max, passed := alert.Check(alertsStore[alert.ID][server.ID])
+			_, passed := alert.Check(alertsStore[alert.ID][server.ID])
 			// 保存当前服务器状态信息
 			curServer := model.Server{}
 			copier.Copy(&curServer, server)
@@ -184,15 +184,15 @@ func checkStatus() {
 				}
 				alertsPrevState[alert.ID][server.ID] = _RuleCheckPass
 			}
-			// 清理旧数据：只需保留最近 max 个采样点（各规则 Duration 的最大值）。
-			// max==0 表示该 alert 没有任何有效规则会回看历史（例如全部
-			// Duration<=0 被跳过），此时历史采样无用，必须清空——否则每个
-			// tick 都 append 而永不裁剪，切片会无限增长成内存泄漏。
+			// 清理旧数据：保留窗口由规则定义决定（各规则 Duration 的最大值），
+			// 而非 Check 的判定结果。window==0 表示没有任何有效规则需要回看历史
+			// （例如全部 Duration<=0），此时清空采样避免切片无限增长。
+			window := alert.RetentionWindow()
 			samples := alertsStore[alert.ID][server.ID]
-			if max <= 0 {
+			if window <= 0 {
 				alertsStore[alert.ID][server.ID] = samples[:0]
-			} else if max < len(samples) {
-				alertsStore[alert.ID][server.ID] = samples[len(samples)-max:]
+			} else if window < len(samples) {
+				alertsStore[alert.ID][server.ID] = samples[len(samples)-window:]
 			}
 		}
 	}

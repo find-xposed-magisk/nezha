@@ -196,6 +196,25 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 	return slices.Max(durations), hasPassedRule
 }
 
+// RetentionWindow 返回保留历史采样所需的长度（各规则窗口的最大值），只依赖
+// 规则定义而非 Check 的判定结果——否则窗口未填满时 Check 返回的 max=0 会被
+// 误判为"无需历史"而清空采样，使规则永远攒不够样本。
+func (r *AlertRule) RetentionWindow() int {
+	window := 0
+	for _, rule := range r.Rules {
+		var need int
+		if rule.IsTransferDurationRule() || rule.IsOfflineRule() {
+			need = 1
+		} else if d := int(rule.Duration); d > 0 {
+			need = d
+		}
+		if need > window {
+			window = need
+		}
+	}
+	return window
+}
+
 func boundCheck(length, duration int, passed bool) bool {
 	if passed {
 		return true

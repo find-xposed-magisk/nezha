@@ -360,3 +360,67 @@ func TestAlertRule_ZeroDurationMixedWithValidRule(t *testing.T) {
 		t.Fatalf("the valid Duration:3 rule must still set max=3, got %d", maxD)
 	}
 }
+
+// trimSamples mirrors singleton.checkStatus retention: keep the most recent
+// `window` samples, clear when window<=0. window comes from RetentionWindow(),
+// the production code under test.
+func trimSamples(samples [][]bool, window int) [][]bool {
+	if window <= 0 {
+		return samples[:0]
+	} else if window < len(samples) {
+		return samples[len(samples)-window:]
+	}
+	return samples
+}
+
+// TestAlertRule_GeneralRuleAccumulatesSamples is a regression guard: a normal
+// Duration>1 general rule must be able to fire. checkStatus appends one sample
+// per tick then trims to the retention window; if the window is derived from
+// Check's verdict (which is 0 while the rule is still filling) the history is
+// wiped every tick, the window never reaches Duration, and the alert never
+// raises. RetentionWindow() must keep enough samples for the rule to converge.
+func TestAlertRule_GeneralRuleAccumulatesSamples(t *testing.T) {
+	const duration = 10
+	rule := &AlertRule{
+		Rules: []*Rule{{Type: "cpu", Duration: duration}},
+	}
+
+	var samples [][]bool
+	var lastPassed bool
+	maxLen := 0
+	for tick := 0; tick < duration*3; tick++ {
+		samples = append(samples, []bool{false}) // failing sample
+		_, lastPassed = rule.Check(samples)
+		samples = trimSamples(samples, rule.RetentionWindow())
+		if len(samples) > maxLen {
+			maxLen = len(samples)
+		}
+	}
+
+	if maxLen < duration {
+		t.Fatalf("samples never accumulated to Duration: max window reached %d, want >= %d", maxLen, duration)
+	}
+	if lastPassed {
+		t.Fatalf("a server failing every tick must eventually fail the check (passed=false), got passed=true")
+	}
+}
+
+// TestAlertRule_RetentionWindow pins the retention contract directly.
+func TestAlertRule_RetentionWindow(t *testing.T) {
+	cases := []struct {
+		msg  string
+		rule *AlertRule
+		want int
+	}{
+		{"single general", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 10}}}, 10},
+		{"zero duration only", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 0}}}, 0},
+		{"mixed picks max", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 0}, {Type: "cpu", Duration: 7}}}, 7},
+		{"offline looks back one", &AlertRule{Rules: []*Rule{{Type: "offline", Duration: 30}}}, 1},
+		{"cycle looks back one", &AlertRule{Rules: []*Rule{{Type: "net_in_speed_cycle"}}}, 1},
+	}
+	for _, c := range cases {
+		if got := c.rule.RetentionWindow(); got != c.want {
+			t.Fatalf("%s: RetentionWindow()=%d want %d", c.msg, got, c.want)
+		}
+	}
+}
