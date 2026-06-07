@@ -30,6 +30,13 @@ func notifyDecision(triggerMode uint8, passed bool, prev uint8) (incident, recov
 // trim, then runs the send-gate. It returns how many incident notifications
 // would have been dispatched across all ticks and the final sample window size.
 func driveCheckStatus(rule *model.AlertRule, triggerMode uint8, ticks int, sample []bool) (incidents int, finalWindow int) {
+	incidents, finalWindow, _ = driveCheckStatusCap(rule, triggerMode, ticks, sample)
+	return incidents, finalWindow
+}
+
+// driveCheckStatusCap additionally reports the peak length and capacity the
+// sample slice ever reached, so tests can assert memory stays bounded.
+func driveCheckStatusCap(rule *model.AlertRule, triggerMode uint8, ticks int, sample []bool) (incidents, finalLen, peakCap int) {
 	var samples [][]bool
 	prev := uint8(_RuleCheckNoData)
 	for i := 0; i < ticks; i++ {
@@ -41,13 +48,16 @@ func driveCheckStatus(rule *model.AlertRule, triggerMode uint8, ticks int, sampl
 		} else if w < len(samples) {
 			samples = samples[len(samples)-w:]
 		}
+		if cap(samples) > peakCap {
+			peakCap = cap(samples)
+		}
 		incident, _, next := notifyDecision(triggerMode, passed, prev)
 		if incident {
 			incidents++
 		}
 		prev = next
 	}
-	return incidents, len(samples)
+	return incidents, len(samples), peakCap
 }
 
 // TestCheckStatus_GeneralRuleFiresIncident is the end-to-end guard for the
@@ -83,5 +93,27 @@ func TestCheckStatus_HealthyServerStaysSilent(t *testing.T) {
 	incidents, _ := driveCheckStatus(rule, model.ModeAlwaysTrigger, 30, []bool{true})
 	if incidents != 0 {
 		t.Fatalf("a healthy server must never trigger an incident, got %d", incidents)
+	}
+}
+
+// TestCheckStatus_SampleMemoryBounded pins the no-memory-leak invariant: no
+// matter how many ticks run, the per-(alert,server) sample slice length and
+// capacity stay bounded by the rule's retention window, never growing with
+// elapsed time. Runs far more ticks than the window to expose any unbounded
+// growth.
+func TestCheckStatus_SampleMemoryBounded(t *testing.T) {
+	const duration = 10
+	rule := &model.AlertRule{Rules: []*model.Rule{{Type: "cpu", Duration: duration}}}
+
+	_, finalLen, peakCap := driveCheckStatusCap(rule, model.ModeAlwaysTrigger, 100000, []bool{false})
+
+	if finalLen > duration {
+		t.Fatalf("sample length exceeded retention window after many ticks: got %d want <= %d", finalLen, duration)
+	}
+	// append grows capacity geometrically; with length pinned at window+1 the
+	// backing array stabilises at a small constant. A generous 4x window bound
+	// catches any reintroduced unbounded growth without being flaky.
+	if peakCap > duration*4 {
+		t.Fatalf("sample capacity grew unbounded: peak cap %d exceeds 4x window %d", peakCap, duration*4)
 	}
 }
