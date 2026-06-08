@@ -199,11 +199,14 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 // RetentionWindow 返回保留历史采样所需的长度（各规则窗口的最大值），只依赖
 // 规则定义而非 Check 的判定结果——否则窗口未填满时 Check 返回的 max=0 会被
 // 误判为"无需历史"而清空采样，使规则永远攒不够样本。
+// 各规则类型回看的采样数必须与 Check 中实际读取的窗口一致：
+//   - 周期流量规则：Check 只读最后 1 个采样点 → 需要 1
+//   - 离线规则、常规规则：Check 读取 points[len-Duration:] → 需要 Duration
 func (r *AlertRule) RetentionWindow() int {
 	window := 0
 	for _, rule := range r.Rules {
 		var need int
-		if rule.IsTransferDurationRule() || rule.IsOfflineRule() {
+		if rule.IsTransferDurationRule() {
 			need = 1
 		} else if d := int(rule.Duration); d > 0 {
 			need = d

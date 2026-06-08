@@ -415,12 +415,78 @@ func TestAlertRule_RetentionWindow(t *testing.T) {
 		{"single general", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 10}}}, 10},
 		{"zero duration only", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 0}}}, 0},
 		{"mixed picks max", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 0}, {Type: "cpu", Duration: 7}}}, 7},
-		{"offline looks back one", &AlertRule{Rules: []*Rule{{Type: "offline", Duration: 30}}}, 1},
+		{"offline keeps Duration", &AlertRule{Rules: []*Rule{{Type: "offline", Duration: 30}}}, 30},
 		{"cycle looks back one", &AlertRule{Rules: []*Rule{{Type: "net_in_speed_cycle"}}}, 1},
 	}
 	for _, c := range cases {
 		if got := c.rule.RetentionWindow(); got != c.want {
 			t.Fatalf("%s: RetentionWindow()=%d want %d", c.msg, got, c.want)
+		}
+	}
+}
+
+// TestAlertRule_OfflineRuleAccumulatesSamples is a regression guard for offline
+// alerts that never fire. Check's offline branch reads points[len-Duration:],
+// so it needs Duration samples retained; if RetentionWindow trims to 1 (as an
+// earlier fix wrongly did for offline rules), the window never reaches Duration,
+// boundCheck keeps returning "passed", and the offline alert never raises.
+func TestAlertRule_OfflineRuleAccumulatesSamples(t *testing.T) {
+	const duration = 10
+	rule := &AlertRule{Rules: []*Rule{{Type: "offline", Duration: duration}}}
+
+	var samples [][]bool
+	var lastPassed bool
+	maxLen := 0
+	for tick := 0; tick < duration*3; tick++ {
+		samples = append(samples, []bool{false}) // offline sample
+		_, lastPassed = rule.Check(samples)
+		samples = trimSamples(samples, rule.RetentionWindow())
+		if len(samples) > maxLen {
+			maxLen = len(samples)
+		}
+	}
+
+	if maxLen < duration {
+		t.Fatalf("offline samples never accumulated to Duration: max window reached %d, want >= %d", maxLen, duration)
+	}
+	if lastPassed {
+		t.Fatalf("a server offline every tick must eventually fail the offline check (passed=false), got passed=true")
+	}
+}
+
+// TestAlertRule_CombinedRuleAccumulatesSamples drives the real trim loop for
+// mixed-type alerts. The verdict is AND-of-failure: an incident fires only once
+// every rule's lookback window is full and all fail. RetentionWindow must keep
+// enough samples for the largest window (offline/general need Duration, cycle
+// needs 1); if any rule type is under-retained the alert never fires.
+func TestAlertRule_CombinedRuleAccumulatesSamples(t *testing.T) {
+	cases := []struct {
+		msg        string
+		rule       *AlertRule
+		sample     []bool
+		fireAt     int // tick index where passed must first become false
+		wantWindow int
+	}{
+		{"general3+general10", &AlertRule{Rules: []*Rule{{Type: "cpu", Duration: 3}, {Type: "memory", Duration: 10}}}, []bool{false, false}, 9, 10},
+		{"offline5+general10", &AlertRule{Rules: []*Rule{{Type: "offline", Duration: 5}, {Type: "cpu", Duration: 10}}}, []bool{false, false}, 9, 10},
+		{"transfer+general8", &AlertRule{Rules: []*Rule{{Type: "net_in_speed_cycle"}, {Type: "cpu", Duration: 8}}}, []bool{false, false}, 7, 8},
+		{"offline3+offline12", &AlertRule{Rules: []*Rule{{Type: "offline", Duration: 3}, {Type: "offline", Duration: 12}}}, []bool{false, false}, 11, 12},
+	}
+	for _, c := range cases {
+		if got := c.rule.RetentionWindow(); got != c.wantWindow {
+			t.Fatalf("%s: RetentionWindow()=%d want %d", c.msg, got, c.wantWindow)
+		}
+		var samples [][]bool
+		firstFire := -1
+		for tick := 0; tick < c.wantWindow*3; tick++ {
+			samples = append(samples, append([]bool(nil), c.sample...))
+			if _, passed := c.rule.Check(samples); !passed && firstFire < 0 {
+				firstFire = tick
+			}
+			samples = trimSamples(samples, c.rule.RetentionWindow())
+		}
+		if firstFire != c.fireAt {
+			t.Fatalf("%s: alert first fired at tick %d, want %d (never-firing = -1)", c.msg, firstFire, c.fireAt)
 		}
 	}
 }
