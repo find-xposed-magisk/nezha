@@ -268,7 +268,10 @@ func TestShowServiceFiltersCycleTransferStatsLikeServerList(t *testing.T) {
 	serviceSentinel, err := singleton.NewServiceSentinel(make(chan *model.Service, 2))
 	assert.NoError(t, err)
 	singleton.ServiceSentinelShared = serviceSentinel
-	t.Cleanup(func() { singleton.ServiceSentinelShared = originalServiceSentinel })
+	t.Cleanup(func() {
+		serviceSentinel.Close()
+		singleton.ServiceSentinelShared = originalServiceSentinel
+	})
 
 	singleton.AlertsLock.Lock()
 	originalCycleTransferStats := singleton.AlertsCycleTransferStatsStore
@@ -288,23 +291,27 @@ func TestShowServiceFiltersCycleTransferStatsLikeServerList(t *testing.T) {
 	})
 
 	tests := []struct {
-		name      string
-		viewer    *model.User
-		wantNames map[uint64]string
+		name         string
+		viewer       *model.User
+		wantServices []uint64
+		wantNames    map[uint64]string
 	}{
 		{
-			name:      "guest sees public servers only",
-			wantNames: map[uint64]string{1: "public server"},
+			name:         "guest sees public servers only",
+			wantServices: []uint64{10},
+			wantNames:    map[uint64]string{1: "public server"},
 		},
 		{
-			name:      "member sees public and owned hidden servers",
-			viewer:    &model.User{Common: model.Common{ID: 200}, Role: model.RoleMember},
-			wantNames: map[uint64]string{1: "public server", 3: "hidden member server"},
+			name:         "member sees public and owned hidden servers",
+			viewer:       &model.User{Common: model.Common{ID: 200}, Role: model.RoleMember},
+			wantServices: []uint64{10},
+			wantNames:    map[uint64]string{1: "public server", 3: "hidden member server"},
 		},
 		{
-			name:      "admin sees every server",
-			viewer:    &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin},
-			wantNames: map[uint64]string{1: "public server", 2: "hidden admin server", 3: "hidden member server"},
+			name:         "admin sees every server",
+			viewer:       &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin},
+			wantServices: []uint64{10, 11},
+			wantNames:    map[uint64]string{1: "public server", 2: "hidden admin server", 3: "hidden member server"},
 		},
 	}
 
@@ -317,8 +324,7 @@ func TestShowServiceFiltersCycleTransferStatsLikeServerList(t *testing.T) {
 
 			got, err := showService(ctx)
 			assert.NoError(t, err)
-			assert.Contains(t, got.Services, uint64(10))
-			assert.NotContains(t, got.Services, uint64(11))
+			assert.ElementsMatch(t, tc.wantServices, serviceResponseIDs(got.Services))
 			if assert.Contains(t, got.CycleTransferStats, uint64(7)) {
 				cycleStats := got.CycleTransferStats[7]
 				assert.Equal(t, tc.wantNames, cycleStats.ServerName)
@@ -333,6 +339,14 @@ func TestShowServiceFiltersCycleTransferStatsLikeServerList(t *testing.T) {
 			}
 		})
 	}
+}
+
+func serviceResponseIDs(stats map[uint64]model.ServiceResponseItem) []uint64 {
+	ids := make([]uint64, 0, len(stats))
+	for id := range stats {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func decodeIDs[T ~uint64](t *testing.T, body []byte) []T {

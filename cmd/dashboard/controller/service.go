@@ -29,7 +29,7 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 	res, err, _ := requestGroup.Do(serviceResponseCacheKey(c), func() (any, error) {
 		singleton.AlertsLock.RLock()
 		defer singleton.AlertsLock.RUnlock()
-		stats := singleton.ServiceSentinelShared.CopyStats()
+		stats := filterServiceStatsForViewer(c, singleton.ServiceSentinelShared.CopyStats())
 		var cycleTransferStats map[uint64]model.CycleTransferStats
 		copier.Copy(&cycleTransferStats, singleton.AlertsCycleTransferStatsStore)
 		return []any{
@@ -44,6 +44,22 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 		Services:           res.([]any)[0].(map[uint64]model.ServiceResponseItem),
 		CycleTransferStats: res.([]any)[1].(map[uint64]model.CycleTransferStats),
 	}, nil
+}
+
+func filterServiceStatsForViewer(c *gin.Context, stats map[uint64]model.ServiceResponseItem) map[uint64]model.ServiceResponseItem {
+	if len(stats) == 0 {
+		return stats
+	}
+	services := singleton.ServiceSentinelShared.GetList()
+	filteredStats := make(map[uint64]model.ServiceResponseItem, len(stats))
+	for serviceID, stat := range stats {
+		service, ok := services[serviceID]
+		if !ok || !userCanViewService(c, service) {
+			continue
+		}
+		filteredStats[serviceID] = stat
+	}
+	return filteredStats
 }
 
 func serviceResponseCacheKey(c *gin.Context) string {
