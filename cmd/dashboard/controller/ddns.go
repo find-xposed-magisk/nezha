@@ -30,6 +30,13 @@ func listDDNS(c *gin.Context) ([]*model.DDNSProfile, error) {
 		return nil, err
 	}
 
+	// 列表端点不回显写入态凭据：ddnsProfiles 是 copier 复制出的副本，置零安全，
+	// 不影响 singleton 内原始数据。
+	for _, p := range ddnsProfiles {
+		p.AccessSecret = ""
+		p.WebhookHeaders = ""
+	}
+
 	return ddnsProfiles, nil
 }
 
@@ -137,12 +144,18 @@ func updateDDNS(c *gin.Context) (any, error) {
 	p.Provider = df.Provider
 	p.Domains = df.Domains
 	p.AccessID = df.AccessID
-	p.AccessSecret = df.AccessSecret
 	p.WebhookURL = df.WebhookURL
 	p.WebhookMethod = df.WebhookMethod
 	p.WebhookRequestType = df.WebhookRequestType
 	p.WebhookRequestBody = df.WebhookRequestBody
-	p.WebhookHeaders = df.WebhookHeaders
+
+	// 凭据在列表接口已脱敏，前端无法回填；空值视为"不修改"，保留旧值避免误清空。
+	if df.AccessSecret != "" {
+		p.AccessSecret = df.AccessSecret
+	}
+	if df.WebhookHeaders != "" {
+		p.WebhookHeaders = df.WebhookHeaders
+	}
 
 	for n, domain := range p.Domains {
 		// IDN to ASCII

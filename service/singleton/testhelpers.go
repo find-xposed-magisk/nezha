@@ -43,6 +43,7 @@ func (c *DDNSClass) InsertForTest(p *model.DDNSProfile) {
 	c.listMu.Lock()
 	c.list[p.ID] = p
 	c.listMu.Unlock()
+	c.sortList()
 }
 
 // NewEmptyNotificationClassForTest 构造空 NotificationClass。
@@ -62,4 +63,5 @@ func (c *NotificationClass) InsertForTest(n *model.Notification) {
 	c.listMu.Lock()
 	c.list[n.ID] = n
 	c.listMu.Unlock()
+	c.sortList()
 }

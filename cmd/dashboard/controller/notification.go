@@ -29,6 +29,14 @@ func listNotification(c *gin.Context) ([]*model.Notification, error) {
 	if err := copier.Copy(&notifications, &slist); err != nil {
 		return nil, err
 	}
+
+	// 列表端点不回显写入态凭据：notifications 是 copier 复制出的副本，置零安全，
+	// 不影响 singleton 内原始数据。
+	for _, n := range notifications {
+		n.URL = ""
+		n.RequestHeader = ""
+		n.RequestBody = ""
+	}
 	return notifications, nil
 }
 
@@ -117,13 +125,21 @@ func updateNotification(c *gin.Context) (any, error) {
 	n.Name = nf.Name
 	n.RequestMethod = nf.RequestMethod
 	n.RequestType = nf.RequestType
-	n.RequestHeader = nf.RequestHeader
-	n.RequestBody = nf.RequestBody
-	n.URL = nf.URL
 	verifyTLS := nf.VerifyTLS
 	n.VerifyTLS = &verifyTLS
 	formatMetricUnits := nf.FormatMetricUnits
 	n.FormatMetricUnits = &formatMetricUnits
+
+	// 凭据在列表接口已脱敏，前端无法回填；空值视为"不修改"，保留旧值避免误清空。
+	if nf.URL != "" {
+		n.URL = nf.URL
+	}
+	if nf.RequestHeader != "" {
+		n.RequestHeader = nf.RequestHeader
+	}
+	if nf.RequestBody != "" {
+		n.RequestBody = nf.RequestBody
+	}
 
 	ns := model.NotificationServerBundle{
 		Notification: &n,
