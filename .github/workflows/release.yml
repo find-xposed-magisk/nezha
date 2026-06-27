@@ -33,7 +33,7 @@ jobs:
 
       - run: git config --global --add safe.directory /__w/nezha/nezha
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Prepare frontends' dists
         run: |
@@ -60,7 +60,7 @@ jobs:
       - name: Cache zstd for s390x
         if: matrix.goarch == 's390x'
         id: cache-zstd
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/zstd-s390x
           key: zstd-s390x-v1.5.7
@@ -178,7 +178,7 @@ jobs:
     needs: build
     name: Release Docker images
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
