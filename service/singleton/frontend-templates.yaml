@@ -2,14 +2,14 @@
   name: "OfficialAdmin"
   repository: "https://github.com/nezhahq/admin-frontend"
   author: "nezhahq"
-  version: "v2.2.4"
+  version: "v2.2.5"
   is_admin: true
   is_official: true
 - path: "user-dist"
   name: "Official"
   repository: "https://github.com/hamster1963/nezha-dash-v2"
   author: "hamster1963"
-  version: "v2.3.1"
+  version: "v2.3.2"
   is_official: true
 - path: "nazhua-dist"
   name: "Nazhua"
@@ -20,7 +20,7 @@
   name: "Aobobo"
   repository: "https://github.com/hi2shark/aobobo"
   author: "hi2shark"
-  version: "v1.4.3"
+  version: "v1.4.5"
 - path: "nezha-ascii-dist"
   name: "Nezha-ASCII"
   repository: "https://github.com/hamster1963/nezha-ascii"
