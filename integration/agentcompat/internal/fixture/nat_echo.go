@@ -29,11 +29,13 @@ type NATEchoBackend struct {
 	listener         net.Listener
 	results          chan natEchoResult
 	done             chan struct{}
+	connectionsReady chan struct{}
 	requireHalfClose bool
 	closeOnce        sync.Once
 	waitGroup        sync.WaitGroup
 	mutex            sync.Mutex
 	connections      map[net.Conn]struct{}
+	closing          bool
 }
 
 func StartNATEchoBackend() (*NATEchoBackend, error) {
@@ -53,6 +55,7 @@ func startNATEchoBackend(requireHalfClose bool) (*NATEchoBackend, error) {
 		listener:         listener,
 		results:          make(chan natEchoResult, 16),
 		done:             make(chan struct{}),
+		connectionsReady: make(chan struct{}, 16),
 		requireHalfClose: requireHalfClose,
 		connections:      make(map[net.Conn]struct{}),
 	}
@@ -76,12 +79,24 @@ func (backend *NATEchoBackend) WaitRequest(ctx context.Context) (NATEchoRecord, 
 	}
 }
 
+func (backend *NATEchoBackend) WaitConnection(ctx context.Context) error {
+	select {
+	case <-backend.connectionsReady:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for NAT echo connection: %w", ctx.Err())
+	case <-backend.done:
+		return errors.New("NAT echo backend closed")
+	}
+}
+
 func (backend *NATEchoBackend) Close() error {
 	var closeErr error
 	backend.closeOnce.Do(func() {
 		close(backend.done)
 		closeErr = backend.listener.Close()
 		backend.mutex.Lock()
+		backend.closing = true
 		connections := make([]net.Conn, 0, len(backend.connections))
 		for connection := range backend.connections {
 			connections = append(connections, connection)
@@ -110,9 +125,18 @@ func (backend *NATEchoBackend) accept() {
 			return
 		}
 		backend.mutex.Lock()
+		if backend.closing {
+			backend.mutex.Unlock()
+			_ = connection.Close()
+			continue
+		}
 		backend.connections[connection] = struct{}{}
-		backend.mutex.Unlock()
 		backend.waitGroup.Add(1)
+		backend.mutex.Unlock()
+		select {
+		case backend.connectionsReady <- struct{}{}:
+		default:
+		}
 		go backend.handle(connection)
 	}
 }
