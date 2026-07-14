@@ -82,3 +82,53 @@ func TestFixture_NATEcho(t *testing.T) {
 		t.Fatalf("NAT request record = %+v", record)
 	}
 }
+
+func TestFixture_NATEchoCloseInterruptsIncompleteRequest(t *testing.T) {
+	// Given
+	backend, err := StartNATEchoBackend()
+	requireNoFixtureError(t, err)
+	connection, err := net.DialTimeout("tcp", backend.Address(), time.Second)
+	requireNoFixtureError(t, err)
+	defer connection.Close()
+	_, err = io.WriteString(connection, "GET /incomplete HTTP/1.1\r\nHost: nat.invalid\r\n")
+	requireNoFixtureError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	requireNoFixtureError(t, backend.WaitConnection(ctx))
+
+	// When
+	closed := make(chan error, 1)
+	go func() { closed <- backend.Close() }()
+
+	// Then
+	select {
+	case err := <-closed:
+		requireNoFixtureError(t, err)
+	case <-ctx.Done():
+		t.Fatal("NAT echo close did not interrupt incomplete request")
+	}
+}
+
+func TestFixture_NATEchoCloseTerminatesSockets(t *testing.T) {
+	// Given
+	backend, err := StartNATHalfCloseEchoBackend()
+	requireNoFixtureError(t, err)
+	address := backend.Address()
+	connection, err := net.DialTimeout("tcp", address, time.Second)
+	requireNoFixtureError(t, err)
+	requireNoFixtureError(t, connection.SetDeadline(time.Now().Add(time.Second)))
+
+	// When
+	requireNoFixtureError(t, backend.Close())
+
+	// Then
+	buffer := make([]byte, 1)
+	if _, err := connection.Read(buffer); err == nil {
+		t.Fatal("active NAT socket remained readable after backend close")
+	}
+	requireNoFixtureError(t, connection.Close())
+	if connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond); err == nil {
+		_ = connection.Close()
+		t.Fatal("NAT listener accepted a connection after backend close")
+	}
+}

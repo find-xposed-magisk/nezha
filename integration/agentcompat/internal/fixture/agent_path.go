@@ -70,6 +70,11 @@ func (root AgentRoot) newPath(relative string, destructive bool) (AgentPath, err
 	if err := ensureRealParentDirectories(root.absolute, nativeRelative); err != nil {
 		return AgentPath{}, err
 	}
+	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return AgentPath{}, rejectPath(PathRejectionSymlinkFinal)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return AgentPath{}, fmt.Errorf("inspect agent fixture path: %w", err)
+	}
 	return AgentPath{absolute: absolute, relative: nativeRelative}, nil
 }
 

@@ -18,6 +18,7 @@ const (
 	PathRejectionDestructiveRoot PathRejectionReason = "destructive_root"
 	PathRejectionEscape          PathRejectionReason = "escape"
 	PathRejectionSymlinkParent   PathRejectionReason = "symlink_parent"
+	PathRejectionSymlinkFinal    PathRejectionReason = "symlink_final"
 	PathRejectionADS             PathRejectionReason = "ads"
 )
 

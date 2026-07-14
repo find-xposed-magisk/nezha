@@ -97,6 +97,41 @@ func TestFixture_AgentPathRejectsSymlinkParent(t *testing.T) {
 	assertPathRejection(t, err, PathRejectionSymlinkParent)
 }
 
+func TestFixture_AgentPathRejectsSymlinkTarget(t *testing.T) {
+	// Given
+	root := newTestAgentRoot(t, "agent-symlink-target")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	requireNoFixtureError(t, os.WriteFile(outside, []byte("outside"), 0o600))
+	requireNoFixtureError(t, os.Symlink(outside, filepath.Join(root.Absolute(), "linked.txt")))
+
+	// When
+	_, err := root.Path("linked.txt")
+
+	// Then
+	assertPathRejection(t, err, PathRejectionSymlinkFinal)
+}
+
+func TestFixture_AgentPathRejectsExistingFinalSymlink(t *testing.T) {
+	// Given
+	root := newTestAgentRoot(t, "agent-final-symlink")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	requireNoFixtureError(t, os.WriteFile(outside, []byte("unchanged"), 0o600))
+	requireNoFixtureError(t, os.Symlink(outside, filepath.Join(root.Absolute(), "linked.txt")))
+
+	// When
+	_, pathErr := root.Path("linked.txt")
+	_, destructiveErr := root.DestructivePath("linked.txt")
+
+	// Then
+	assertPathRejection(t, pathErr, PathRejectionSymlinkFinal)
+	assertPathRejection(t, destructiveErr, PathRejectionSymlinkFinal)
+	content, err := os.ReadFile(outside)
+	requireNoFixtureError(t, err)
+	if string(content) != "unchanged" {
+		t.Fatalf("final symlink target changed: %q", content)
+	}
+}
+
 func TestFixture_AgentPathRejectsCleanedEscape(t *testing.T) {
 	// Given
 	root := newTestAgentRoot(t, "agent-cleaned-escape")
