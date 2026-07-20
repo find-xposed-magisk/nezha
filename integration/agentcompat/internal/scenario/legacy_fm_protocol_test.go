@@ -91,7 +91,7 @@ func TestLegacyFM_RejectedPathDispatchesNoFrame(t *testing.T) {
 		{name: "absolute", candidate: filepath.Join(t.TempDir(), "outside"), wantReason: fixture.PathRejectionAbsolute},
 		{name: "parent", candidate: "../outside", wantReason: fixture.PathRejectionParent},
 		{name: "destructive root", candidate: ".", wantReason: fixture.PathRejectionDestructiveRoot},
-		{name: "volume", candidate: `C:\outside`, wantReason: fixture.PathRejectionVolume},
+		{name: "absolute", candidate: `C:\outside`, wantReason: fixture.PathRejectionAbsolute},
 		{name: "separator", candidate: `inside\outside`, wantReason: fixture.PathRejectionSeparator},
 		{name: "symlink parent", candidate: "linked/file", wantReason: fixture.PathRejectionSymlinkParent},
 	}

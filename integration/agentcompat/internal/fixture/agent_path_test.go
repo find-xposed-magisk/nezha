@@ -52,16 +52,17 @@ func TestFixture_AgentPathRejectsParentEscape(t *testing.T) {
 	}
 }
 
-func TestFixture_AgentPathRejectsVolumeOrSeparatorEscape(t *testing.T) {
+func TestFixture_AgentPathRejectsWindowsVolumeOrSeparatorEscape(t *testing.T) {
 	root := newTestAgentRoot(t, "agent-volume")
 	tests := []struct {
 		name      string
 		candidate string
 		reason    PathRejectionReason
 	}{
-		{name: "drive absolute", candidate: `C:\outside.txt`, reason: PathRejectionVolume},
+		{name: "drive absolute", candidate: `C:\outside.txt`, reason: PathRejectionAbsolute},
 		{name: "drive relative", candidate: `C:outside.txt`, reason: PathRejectionVolume},
 		{name: "UNC", candidate: `\\server\share\outside.txt`, reason: PathRejectionVolume},
+		{name: "extended UNC", candidate: `\\?\UNC\server\share\outside.txt`, reason: PathRejectionVolume},
 		{name: "alternate separator", candidate: `inside\outside.txt`, reason: PathRejectionSeparator},
 		{name: "empty component", candidate: "inside//outside.txt", reason: PathRejectionSeparator},
 	}

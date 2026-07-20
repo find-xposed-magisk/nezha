@@ -90,6 +90,9 @@ func validateRelativeAgentPath(candidate string, destructive bool) (string, erro
 	if strings.TrimSpace(candidate) == "" {
 		return "", rejectPath(PathRejectionEmpty)
 	}
+	if hasWindowsAbsolutePath(candidate) {
+		return "", rejectPath(PathRejectionAbsolute)
+	}
 	if hasWindowsVolume(candidate) {
 		return "", rejectPath(PathRejectionVolume)
 	}
@@ -116,6 +119,10 @@ func validateRelativeAgentPath(candidate string, destructive bool) (string, erro
 		return "", rejectPath(PathRejectionDestructiveRoot)
 	}
 	return nativeRelative, nil
+}
+
+func hasWindowsAbsolutePath(candidate string) bool {
+	return len(candidate) >= 3 && ((candidate[0] >= 'A' && candidate[0] <= 'Z') || (candidate[0] >= 'a' && candidate[0] <= 'z')) && candidate[1] == ':' && (candidate[2] == '\\' || candidate[2] == '/')
 }
 
 func hasWindowsVolume(candidate string) bool {
