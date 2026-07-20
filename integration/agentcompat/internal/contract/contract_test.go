@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -82,11 +83,15 @@ func TestContract_ResourceBudgetRejectsInvalidInput(t *testing.T) {
 }
 
 func TestContract_CLIValues(t *testing.T) {
-	paths, err := NewPaths("/src/nezha", "/src/agent", "/tmp/results")
+	root := t.TempDir()
+	nezhaSource := filepath.Join(root, "nezha-source")
+	agentSource := filepath.Join(root, "agent-source")
+	resultsDir := filepath.Join(root, "results")
+	paths, err := NewPaths(nezhaSource, agentSource, resultsDir)
 	if err != nil {
 		t.Fatalf("construct paths: %v", err)
 	}
-	if paths.NezhaSource().String() != "/src/nezha" || paths.AgentSource().String() != "/src/agent" || paths.ResultsDir().String() != "/tmp/results" {
+	if paths.NezhaSource().String() != nezhaSource || paths.AgentSource().String() != agentSource || paths.ResultsDir().String() != resultsDir {
 		t.Fatalf("unexpected paths: %#v", paths)
 	}
 	scenario, err := NewScenario("metadata")
