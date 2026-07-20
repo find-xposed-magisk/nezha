@@ -31,7 +31,13 @@ func verifyMCPFilesystemPathGuards(ctx context.Context, assertions *AssertionSet
 	if err := os.Symlink(symlinkFinalTarget, filepath.Join(filesystem.root.Absolute(), "linked-final")); err != nil {
 		return err
 	}
-	before, err := filesystemTargetHashes(directTarget, symlinkParentTarget, symlinkFinalTarget)
+	root, err := os.OpenRoot(fixtureParent)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	targetNames := []string{"outside-sentinel", "outside-directory/parent-target.txt", "final-target.txt"}
+	before, err := filesystemTargetHashes(root, targetNames...)
 	if err != nil {
 		return err
 	}
@@ -64,7 +70,7 @@ func verifyMCPFilesystemPathGuards(ctx context.Context, assertions *AssertionSet
 	}
 	requestsAfter := filesystem.client.RequestCount()
 	dispatched := int64(requestsAfter) - int64(requestsBefore)
-	after, err := filesystemTargetHashes(directTarget, symlinkParentTarget, symlinkFinalTarget)
+	after, err := filesystemTargetHashes(root, targetNames...)
 	if err != nil {
 		return err
 	}
@@ -79,10 +85,10 @@ func verifyMCPFilesystemPathGuards(ctx context.Context, assertions *AssertionSet
 	return nil
 }
 
-func filesystemTargetHashes(paths ...string) ([32]byte, error) {
+func filesystemTargetHashes(root *os.Root, names ...string) ([32]byte, error) {
 	hash := sha256.New()
-	for _, path := range paths {
-		content, err := os.ReadFile(path)
+	for _, name := range names {
+		content, err := root.ReadFile(name)
 		if err != nil {
 			return [32]byte{}, err
 		}
