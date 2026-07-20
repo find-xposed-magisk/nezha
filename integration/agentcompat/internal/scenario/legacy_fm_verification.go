@@ -133,9 +133,9 @@ func newLegacyFMRunID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func verifyLegacyFMSentinels(sentinelPaths []string, sentinel []byte) error {
-	for _, path := range sentinelPaths {
-		content, err := os.ReadFile(path)
+func verifyLegacyFMSentinels(root *os.Root, sentinelNames []string, sentinel []byte) error {
+	for _, name := range sentinelNames {
+		content, err := root.ReadFile(name)
 		if err != nil {
 			return err
 		}

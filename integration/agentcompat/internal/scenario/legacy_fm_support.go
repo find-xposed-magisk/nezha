@@ -21,6 +21,9 @@ type legacyFMUserForm struct {
 	Password string `json:"password"`
 }
 
+const legacyFMForeignUsername = "agentcompat-fm-foreign"
+const legacyFMForeignPassword = "agentcompat-fm-password" // #nosec G101 -- Ephemeral localhost integration fixture, not a production credential.
+
 type legacyFMFrameWriter interface {
 	WriteFrame(context.Context, client.Frame) error
 }
@@ -116,13 +119,11 @@ func findLegacyFMServerID(ctx context.Context, dashboardInstance *dashboard.Dash
 }
 
 func createForeignLegacyFMClient(ctx context.Context, dashboardInstance *dashboard.Dashboard) (*client.Client, func() error, error) {
-	const username = "agentcompat-fm-foreign"
-	const password = "agentcompat-fm-password"
 	admin := dashboardInstance.Clients().REST
 	userID, err := client.DoREST[legacyFMUserForm, uint64](ctx, admin, client.RESTRequest[legacyFMUserForm]{
 		Method: http.MethodPost,
 		Path:   "/api/v1/user",
-		Body:   &legacyFMUserForm{Role: 1, Username: username, Password: password},
+		Body:   &legacyFMUserForm{Role: 1, Username: legacyFMForeignUsername, Password: legacyFMForeignPassword},
 	})
 	if err != nil {
 		return nil, func() error { return nil }, err
@@ -137,7 +138,7 @@ func createForeignLegacyFMClient(ctx context.Context, dashboardInstance *dashboa
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(err, cleanup())
 	}
-	if _, err := loginClient.Login(ctx, client.LoginRequest{Username: username, Password: password}); err != nil {
+	if _, err := loginClient.Login(ctx, client.LoginRequest{Username: legacyFMForeignUsername, Password: legacyFMForeignPassword}); err != nil {
 		return nil, func() error { return nil }, errors.Join(err, cleanup())
 	}
 	pat, err := client.DoREST[patRequest, patResponse](ctx, loginClient, client.RESTRequest[patRequest]{

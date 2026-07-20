@@ -101,12 +101,14 @@ func (LegacyFM) Run(ctx context.Context, input LegacyFMInput) (result Result, ru
 	payload := bytes.Repeat(payloadPattern, (1<<20+257)/len(payloadPattern)+1)
 	payload = payload[:1<<20+257]
 	sentinel := []byte("outside-fm-root-sentinel")
-	sentinelPaths := []string{
-		filepath.Join(agentInstance.WorkspaceRoot(), "outside-fm-root-a.txt"),
-		filepath.Join(agentInstance.WorkspaceRoot(), "outside-fm-root-b.txt"),
+	workspaceRoot, err := os.OpenRoot(agentInstance.WorkspaceRoot())
+	if err != nil {
+		return finishLegacyFM(assertions, err)
 	}
-	for _, path := range sentinelPaths {
-		if err := os.WriteFile(path, sentinel, 0o600); err != nil {
+	defer workspaceRoot.Close()
+	sentinelNames := []string{"outside-fm-root-a.txt", "outside-fm-root-b.txt"}
+	for _, name := range sentinelNames {
+		if err := workspaceRoot.WriteFile(name, sentinel, 0o600); err != nil {
 			return finishLegacyFM(assertions, err)
 		}
 	}
@@ -252,7 +254,7 @@ func (LegacyFM) Run(ctx context.Context, input LegacyFMInput) (result Result, ru
 		return finishLegacyFM(assertions, err)
 	}
 
-	sentinelErr := verifyLegacyFMSentinels(sentinelPaths, sentinel)
+	sentinelErr := verifyLegacyFMSentinels(workspaceRoot, sentinelNames, sentinel)
 	assertions.Record("outside-root sentinels remain unchanged", sentinelErr == nil, errorText(sentinelErr))
 	if sentinelErr != nil {
 		return finishLegacyFM(assertions, sentinelErr)
