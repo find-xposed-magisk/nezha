@@ -4,12 +4,18 @@ package scenario
 
 import (
 	"os"
+	"path/filepath"
 
 	"sigs.k8s.io/yaml"
 )
 
 func ReadConfigFile(path string) (AgentConfig, error) {
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return AgentConfig{}, err
+	}
+	defer root.Close()
+	data, err := root.ReadFile(filepath.Base(path))
 	if err != nil {
 		return AgentConfig{}, err
 	}
