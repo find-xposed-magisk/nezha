@@ -97,6 +97,7 @@ func (Transfer) RunWithEvidence(ctx context.Context, input TransferInput) (resul
 		result, runErr = transferFinish(assertions, err)
 		return result, transferEvidence, runErr
 	}
+	defer sentinels.close()
 	execution := transferExecution{
 		client:       dashboardInstance.Clients().MCP,
 		serverID:     serverID,
