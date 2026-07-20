@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -42,7 +43,11 @@ func (workspace *Workspace) Build(ctx context.Context, spec BuildSpec) (string, 
 		arguments = append(arguments, "-ldflags", strings.Join(spec.Ldflags, " "))
 	}
 	arguments = append(arguments, spec.Package)
-	command := exec.CommandContext(ctx, "go", arguments...)
+	goExecutable, err := resolveGoExecutable()
+	if err != nil {
+		return "", err
+	}
+	command := exec.CommandContext(ctx, goExecutable, arguments...) // #nosec G204 -- Resolved absolute regular Go toolchain executable and fixed argv; no shell is invoked.
 	command.Dir = spec.SourceDir
 	command.Env = spec.Env
 	if spec.Env == nil {
@@ -53,4 +58,26 @@ func (workspace *Workspace) Build(ctx context.Context, spec BuildSpec) (string, 
 		return "", fmt.Errorf("build %s: %w: %s", spec.Name, err, output)
 	}
 	return binaryPath, nil
+}
+
+func resolveGoExecutable() (string, error) {
+	candidates := []string{filepath.Join(runtime.GOROOT(), "bin", "go")}
+	if path, err := exec.LookPath("go"); err == nil {
+		candidates = append(candidates, path)
+	}
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return resolved, nil
+		}
+	}
+	return "", errors.New("Go toolchain executable is unavailable")
 }

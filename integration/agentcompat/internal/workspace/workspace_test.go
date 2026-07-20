@@ -122,6 +122,23 @@ func TestWorkspace_BuildsBinaryInRunDirectory(t *testing.T) {
 	}
 }
 
+func TestWorkspace_ResolvesAbsoluteRegularGoExecutable(t *testing.T) {
+	// When
+	path, err := resolveGoExecutable()
+
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(path) {
+		t.Fatalf("Go executable path is not absolute: %s", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		t.Fatalf("Go executable is not an executable regular file: info=%v err=%v", info, err)
+	}
+}
+
 func TestWorkspace_PreservesEvidenceWhenTrackedPIDRemains(t *testing.T) {
 	// Given
 	workspace, err := New(context.Background())
