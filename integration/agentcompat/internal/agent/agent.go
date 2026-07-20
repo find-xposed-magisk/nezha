@@ -26,19 +26,20 @@ const (
 )
 
 type AgentStartConfig struct {
-	SourceDir         string
-	PreparedBinary    *PreparedBinary
-	Endpoint          string
-	Secret            string
-	UUID              string
-	TLS               bool
-	Debug             bool
-	CAFilePath        string
-	FMObserverRunID   string
-	Credential        *syscall.Credential
-	newSupervisor     func(context.Context, processharness.Spec) *processharness.Supervisor
-	trackPID          func(int) error
-	trackProcessGroup func(int) error
+	SourceDir           string
+	PreparedBinary      *PreparedBinary
+	Endpoint            string
+	Secret              string
+	UUID                string
+	TLS                 bool
+	Debug               bool
+	SkipConnectionCount bool
+	CAFilePath          string
+	FMObserverRunID     string
+	Credential          *syscall.Credential
+	newSupervisor       func(context.Context, processharness.Spec) *processharness.Supervisor
+	trackPID            func(int) error
+	trackProcessGroup   func(int) error
 }
 
 type AgentStartError struct {
