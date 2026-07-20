@@ -20,10 +20,10 @@ func TestEvidence_DedicatedArtifactsRequireExactScenarioAssertions(t *testing.T)
 			writeJSONEvidenceFile(t, dir, "transfer.json", validTransferArtifact("", true))
 		}},
 		{"reconnect generic", contract.ScenarioReconnect, "scenario passed", func(t *testing.T, dir string) {
-			writeJSONEvidenceFile(t, dir, "reconnect.json", validReconnectArtifact("", true))
+			writeJSONEvidenceFile(t, dir, "reconnect.json", validReconnectArtifact(t, "", true))
 		}},
 		{"reconnect mismatched", contract.ScenarioReconnect, contract.AssertionTransferWarmup, func(t *testing.T, dir string) {
-			writeJSONEvidenceFile(t, dir, "reconnect.json", validReconnectArtifact("", true))
+			writeJSONEvidenceFile(t, dir, "reconnect.json", validReconnectArtifact(t, "", true))
 		}},
 	}
 	for _, test := range tests {

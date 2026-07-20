@@ -75,7 +75,7 @@ func TestEvidence_DashboardExitRejectsEveryPostFaultField(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeDedicatedExecutableEvidence(t, dir, "reconnect", "dashboard-exit", false)
-			artifact := validReconnectArtifact("dashboard-exit", false)
+			artifact := validReconnectArtifact(t, "dashboard-exit", false)
 			test.mutate(&artifact.Evidence)
 			writeJSONEvidenceFile(t, dir, "reconnect.json", artifact)
 			if err := ValidateDirectory(dir); err == nil {
