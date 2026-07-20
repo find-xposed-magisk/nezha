@@ -225,6 +225,7 @@ func patStreamContext(c *gin.Context) (model.APITokenAccessor, string) {
 func filterServersForViewer(servers []*model.Server, viewerUserID uint64, viewerIsAdmin bool, withPublicNote bool, pat model.APITokenAccessor) []model.StreamServer {
 	out := make([]model.StreamServer, 0, len(servers))
 	for _, server := range servers {
+		runtime := server.RuntimeSnapshot()
 		if pat != nil && !pat.CanAccessServer(server.ID) {
 			continue
 		}
@@ -236,15 +237,19 @@ func filterServersForViewer(servers []*model.Server, viewerUserID uint64, viewer
 		if server.GeoIP != nil {
 			countryCode = server.GeoIP.CountryCode
 		}
+		publicHost := runtime.Host
+		if publicHost != nil && !isOwnerOrAdmin {
+			publicHost = publicHost.Filter()
+		}
 		out = append(out, model.StreamServer{
 			ID:           server.ID,
 			Name:         server.Name,
 			PublicNote:   utils.IfOr(withPublicNote, server.PublicNote, ""),
 			DisplayIndex: server.DisplayIndex,
-			Host:         utils.IfOr(isOwnerOrAdmin, server.Host, server.Host.Filter()),
-			State:        server.State,
+			Host:         publicHost,
+			State:        runtime.State,
 			CountryCode:  countryCode,
-			LastActive:   server.LastActive,
+			LastActive:   runtime.LastActive,
 		})
 	}
 	return out

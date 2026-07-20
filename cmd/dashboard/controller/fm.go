@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
-	"github.com/gorilla/websocket"
 	"github.com/hashicorp/go-uuid"
 
 	"github.com/nezhahq/nezha/model"
@@ -26,6 +25,7 @@ import (
 // @Success 200 {object} model.CreateFMResponse
 // @Router /file [post]
 func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
+	prepareAgentcompatCapabilityHeader(c)
 	idStr := c.Query("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
@@ -49,17 +49,24 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 		return nil, err
 	}
 
-	if err := rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c), server.ID); err != nil {
+	cleanup, err := createIOStreamWithAgentcompatCapability(c, streamId, getUid(c), server.ID, rpc.AgentCompatCapabilityFileManager)
+	if err != nil {
 		return nil, err
 	}
 
-	fmData, _ := json.Marshal(&model.TaskFM{
+	fmData, err := json.Marshal(&model.TaskFM{
 		StreamID: streamId,
 	})
+	if err != nil {
+		// A stream is owned by the caller only after this function succeeds.
+		cleanup()
+		return nil, err
+	}
 	if err := server.SendTask(&proto.Task{
 		Type: model.TaskTypeFM,
 		Data: string(fmData),
 	}); err != nil {
+		cleanup()
 		return nil, err
 	}
 
@@ -92,21 +99,14 @@ func fmStream(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, newWsError("%v", err)
 	}
-	defer wsConn.Close()
 	conn := websocketx.NewConn(wsConn)
+	pingTransport := newWebsocketPingTransport(conn, wsConn.Close)
+	stopPing := startWebsocketPingTicker(c.Request.Context(), time.Second*10, pingTransport)
 
-	deregisterPAT := registerPATConnection(c, func() { _ = wsConn.Close() })
+	deregisterPAT := registerPATConnection(c, func() { _ = pingTransport.Close() })
 	defer deregisterPAT()
-
-	go func() {
-		// PING 保活
-		for {
-			if err = conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
-				return
-			}
-			time.Sleep(time.Second * 10)
-		}
-	}()
+	// Join the ping worker before PAT and WebSocket cleanup can close its writer.
+	defer stopPing()
 
 	if err = rpc.NezhaHandlerSingleton.UserConnected(streamId, conn); err != nil {
 		return nil, newWsError("%v", err)

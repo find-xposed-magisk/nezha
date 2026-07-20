@@ -69,6 +69,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	r.DELETE("/mcp", mcpOriginGuard(), mcpMethodNotAllowed)
 	r.GET("/mcp/download/:token", mcpOriginGuard(), transferDownloadHandler)
 	r.POST("/mcp/upload/:token", mcpOriginGuard(), transferUploadHandler)
+	registerAgentcompatRoutes(r)
 
 	api := r.Group("api/v1")
 	api.POST("/login", authMiddleware.LoginHandler)
