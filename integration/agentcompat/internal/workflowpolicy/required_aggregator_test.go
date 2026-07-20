@@ -24,6 +24,14 @@ func TestPolicy_RejectsMissingRequiredDependency(t *testing.T) {
 }
 
 func TestPolicy_RejectsInvalidRequiredAggregator(t *testing.T) {
+	workflowData := readNezhaQualityWorkflow(t)
+	workflowVariants := []struct {
+		name string
+		data []byte
+	}{
+		{name: "LF", data: workflowData},
+		{name: "CRLF", data: []byte(strings.ReplaceAll(string(workflowData), "\n", "\r\n"))},
+	}
 	tests := []struct {
 		name        string
 		currentText string
@@ -80,22 +88,38 @@ func TestPolicy_RejectsInvalidRequiredAggregator(t *testing.T) {
 			}, "\n          "),
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Given
-			data := readNezhaQualityWorkflow(t)
-			invalidWorkflow := strings.Replace(string(data), test.currentText, test.invalidText, 1)
-			require.NotEqual(t, string(data), invalidWorkflow, "workflow mutation must match current content")
+	for _, variant := range workflowVariants {
+		t.Run(variant.name, func(t *testing.T) {
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					// Given
+					invalidWorkflow := mutateWorkflow(t, variant.data, test.currentText, test.invalidText)
 
-			// When
-			err := workflowpolicy.Verify([]byte(invalidWorkflow), workflowpolicy.RepositoryNezha)
+					// When
+					err := workflowpolicy.Verify([]byte(invalidWorkflow), workflowpolicy.RepositoryNezha)
 
-			// Then
-			var policyError *workflowpolicy.PolicyError
-			require.ErrorAs(t, err, &policyError)
-			require.True(t, policyError.Has(workflowpolicy.RuleWorkflowStructure))
+					// Then
+					var policyError *workflowpolicy.PolicyError
+					require.ErrorAs(t, err, &policyError)
+					require.True(t, policyError.Has(workflowpolicy.RuleWorkflowStructure))
+				})
+			}
 		})
 	}
+}
+
+func mutateWorkflow(t *testing.T, data []byte, currentText, invalidText string) string {
+	t.Helper()
+	workflow := string(data)
+	lineEnding := "\n"
+	if strings.Contains(workflow, "\r\n") {
+		// Windows checkouts preserve CRLF, so multiline mutation snippets must use the source line ending.
+		lineEnding = "\r\n"
+	}
+	currentText = strings.ReplaceAll(currentText, "\n", lineEnding)
+	invalidText = strings.ReplaceAll(invalidText, "\n", lineEnding)
+	require.Equal(t, 1, strings.Count(workflow, currentText), "workflow mutation must match current content exactly once")
+	return strings.Replace(workflow, currentText, invalidText, 1)
 }
 
 func TestPolicy_RejectsMissingRequiredAggregator(t *testing.T) {
