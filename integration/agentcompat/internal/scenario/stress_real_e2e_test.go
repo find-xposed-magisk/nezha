@@ -35,6 +35,8 @@ func TestStressPRFullEightAgentExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	set, err := NewHeldSessionSet(ctx, input)
 	require.NoError(t, err)
+	fdDiagnostics := newRealFDDiagnosticCollector(fdDiagnosticEnabled(os.Getenv("AGENTCOMPAT_FD_DIAGNOSTIC_TAIL")))
+	defer fdDiagnostics.WaitAndLog(t)
 	dashboardIdentity := realFixture.dashboard.RuntimeIdentity()
 	agentIdentities := make([]agent.ProcessIdentity, len(realFixture.agents))
 	workspaceRoots := make([]string, 0, len(realFixture.agents)+2)
@@ -47,7 +49,7 @@ func TestStressPRFullEightAgentExactlyOnce(t *testing.T) {
 	warmups, warmupErr := runStressWarmups(ctx, realFixture, plan)
 	require.NoError(t, warmupErr)
 	require.NoError(t, drainStressDashboardSQLiteJournal(ctx, realFixture))
-	baselineResources, resourceErr := captureStressResources(ctx, realFixture, false)
+	baselineResources, resourceErr := captureStressResources(ctx, realFixture, stressResourceCaptureSpec{Phase: stressResourceBaseline, Diagnostics: fdDiagnostics})
 	require.NoError(t, resourceErr)
 	rounds := make([]StressRoundEvidence, 0, len(plan.Rounds))
 	for _, round := range plan.Rounds {
@@ -59,8 +61,9 @@ func TestStressPRFullEightAgentExactlyOnce(t *testing.T) {
 	}
 	quota, quotaErr := runRealStressQuotaProbe(ctx, realFixture, paths.AgentSource().String())
 	require.NoError(t, quotaErr)
-	endResources, resourceErr := captureStressResources(ctx, realFixture, true)
+	endResources, resourceErr := captureStressResources(ctx, realFixture, stressResourceCaptureSpec{Phase: stressResourceEnd, Diagnostics: fdDiagnostics})
 	require.NoError(t, resourceErr)
+	fdDiagnostics.WaitAndLog(t)
 	require.NoError(t, set.Close(ctx))
 	require.NoError(t, set.WaitHealthy(ctx))
 	cleanupErr := realFixture.close(ctx, nil)
@@ -79,7 +82,33 @@ func TestStressPRFullEightAgentExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func captureStressResources(ctx context.Context, fixture *heldSessionSetRealFixture, end bool) ([]StressProcessWindows, error) {
+type stressResourceCapturePhase uint8
+
+const (
+	stressResourceBaseline stressResourceCapturePhase = iota
+	stressResourceEnd
+)
+
+type stressResourceCaptureSpec struct {
+	Phase       stressResourceCapturePhase
+	Diagnostics *fdDiagnosticCollector
+}
+
+func TestStressResourceCaptureSpec_UsesDisabledDiagnosticsWhenNil(t *testing.T) {
+	// Given / When
+	diagnostics := (stressResourceCaptureSpec{}).diagnostics()
+
+	// Then
+	require.Nil(t, diagnostics)
+	require.False(t, diagnostics.Enabled())
+}
+
+func (spec stressResourceCaptureSpec) diagnostics() *fdDiagnosticCollector {
+	return spec.Diagnostics
+}
+
+func captureStressResources(ctx context.Context, fixture *heldSessionSetRealFixture, spec stressResourceCaptureSpec) ([]StressProcessWindows, error) {
+	diagnostics := spec.diagnostics()
 	result := make([]StressProcessWindows, 0, len(fixture.agents)+1)
 	dashboard := fixture.dashboard.RuntimeIdentity()
 	dashboardProcess, err := NewStressDashboardProcess(dashboard.PID)
@@ -87,7 +116,7 @@ func captureStressResources(ctx context.Context, fixture *heldSessionSetRealFixt
 		return nil, err
 	}
 	windowSpec := processharness.WindowSpec{PID: dashboard.PID, Interval: contract.ResourceSampleInterval}
-	if !end {
+	if spec.Phase == stressResourceBaseline {
 		windowSpec.ObserveSample = observeStressDashboardSQLiteJournal(fixture.dashboard.DatabasePath() + "-journal")
 	}
 	baseline, err := processharness.SampleWindow(ctx, windowSpec)
@@ -95,7 +124,7 @@ func captureStressResources(ctx context.Context, fixture *heldSessionSetRealFixt
 		return nil, err
 	}
 	dashboardWindow := StressProcessWindows{Process: dashboardProcess}
-	if end {
+	if spec.Phase == stressResourceEnd {
 		dashboardWindow.End = baseline
 	} else {
 		dashboardWindow.Baseline = baseline
@@ -111,15 +140,18 @@ func captureStressResources(ctx context.Context, fixture *heldSessionSetRealFixt
 		if err != nil {
 			return nil, err
 		}
-		baseline, err := processharness.SampleWindow(ctx, processharness.WindowSpec{PID: identity.PID, Interval: contract.ResourceSampleInterval})
+		baseline, err := processharness.SampleWindow(ctx, processharness.WindowSpec{PID: identity.PID, Interval: contract.ResourceSampleInterval, CaptureFDObservations: diagnostics.Enabled()})
 		if err != nil {
 			return nil, err
 		}
 		window := StressProcessWindows{Process: process}
-		if end {
+		diagnosticWindow := fdDiagnosticAgentWindow{Process: process, Identity: identity, Window: baseline}
+		if spec.Phase == stressResourceEnd {
 			window.End = baseline
+			diagnostics.RecordEnd(ctx, diagnosticWindow)
 		} else {
 			window.Baseline = baseline
+			diagnostics.RecordBaseline(diagnosticWindow)
 		}
 		result = append(result, window)
 	}
