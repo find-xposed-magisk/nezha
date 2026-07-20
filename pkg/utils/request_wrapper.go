@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 )
 
 var _ io.ReadWriteCloser = (*RequestWrapper)(nil)
@@ -14,6 +15,11 @@ type RequestWrapper struct {
 	req    *http.Request
 	reader *bytes.Buffer
 	writer net.Conn
+
+	closeOnce sync.Once
+	closeInit sync.Once
+	closeDone chan struct{}
+	closeErr  error
 }
 
 func NewRequestWrapper(req *http.Request, writer http.ResponseWriter) (*RequestWrapper, error) {
@@ -27,12 +33,17 @@ func NewRequestWrapper(req *http.Request, writer http.ResponseWriter) (*RequestW
 	}
 	buf := bytes.NewBuffer(nil)
 	if err = req.Write(buf); err != nil {
-		return nil, err
+		var bodyErr error
+		if req.Body != nil {
+			bodyErr = req.Body.Close()
+		}
+		return nil, errors.Join(err, bodyErr, conn.Close())
 	}
 	return &RequestWrapper{
-		req:    req,
-		reader: buf,
-		writer: conn,
+		req:       req,
+		reader:    buf,
+		writer:    conn,
+		closeDone: make(chan struct{}),
 	}, nil
 }
 
@@ -53,7 +64,17 @@ func (rw *RequestWrapper) Write(p []byte) (int, error) {
 }
 
 func (rw *RequestWrapper) Close() error {
-	rw.req.Body.Close()
-	rw.writer.Close()
-	return nil
+	rw.closeInit.Do(func() {
+		rw.closeDone = make(chan struct{})
+	})
+	rw.closeOnce.Do(func() {
+		var bodyErr error
+		if rw.req.Body != nil {
+			bodyErr = rw.req.Body.Close()
+		}
+		rw.closeErr = errors.Join(bodyErr, rw.writer.Close())
+		close(rw.closeDone)
+	})
+	<-rw.closeDone
+	return rw.closeErr
 }

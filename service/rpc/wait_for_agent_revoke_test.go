@@ -16,7 +16,9 @@ import (
 func TestWaitForAgent_RevokeWakesUpWaiter(t *testing.T) {
 	h := NewNezhaHandler()
 	const streamID = "kill-switch-wait"
-	h.CreateStreamWithPurpose(streamID, 0, 7, PurposeMCPTransfer)
+	if err := h.CreateStreamWithPurpose(streamID, 0, 7, PurposeMCPTransfer); err != nil {
+		t.Fatalf("create waiter stream: %v", err)
+	}
 
 	done := make(chan struct {
 		io  any
@@ -35,9 +37,16 @@ func TestWaitForAgent_RevokeWakesUpWaiter(t *testing.T) {
 			dur time.Duration
 		}{stream, ok, time.Since(start)}
 	}()
+	waiter, err := h.GetStream(streamID)
+	if err != nil {
+		t.Fatalf("get waiter context: %v", err)
+	}
+	select {
+	case <-waiter.waitStartedCh:
+	case <-time.After(time.Second):
+		t.Fatal("WaitForAgent did not enter its blocking select")
+	}
 
-	// 让 WaitForAgent 真的进入 select 等待，再触发 kill switch。
-	time.Sleep(50 * time.Millisecond)
 	if revoked := h.RevokeStreamsForPurpose(PurposeMCPTransfer); revoked != 1 {
 		t.Fatalf("expected to revoke exactly 1 MCP stream, got %d", revoked)
 	}
@@ -52,5 +61,48 @@ func TestWaitForAgent_RevokeWakesUpWaiter(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("WaitForAgent never returned after revoke; kill switch did not wake the waiter")
+	}
+}
+
+func TestRevokeStreamsForServerWakesWaitForAgentAndPreservesNewGeneration(t *testing.T) {
+	h := NewNezhaHandler()
+	const streamID = "server-revoke-generation"
+	if err := h.CreateStream(streamID, 0, 7); err != nil {
+		t.Fatalf("create waiter stream: %v", err)
+	}
+	done := make(chan bool, 1)
+	go func() {
+		_, ok := h.WaitForAgent(context.Background(), streamID, time.Minute)
+		done <- ok
+	}()
+	waiter, err := h.GetStream(streamID)
+	if err != nil {
+		t.Fatalf("get waiter stream: %v", err)
+	}
+	select {
+	case <-waiter.waitStartedCh:
+	case <-time.After(time.Second):
+		t.Fatal("WaitForAgent did not reach its blocking select")
+	}
+
+	h.RevokeStreamsForServer(7)
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("WaitForAgent must return false after server revocation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server revocation did not wake WaitForAgent")
+	}
+	h.RevokeStreamsForServer(7)
+	if err := h.CreateStream(streamID, 0, 8); err != nil {
+		t.Fatalf("new generation must reuse released ID: %v", err)
+	}
+	h.RevokeStreamsForServer(7)
+	if h.StreamCount() != 1 {
+		t.Fatalf("new generation must remain tracked, got %d streams", h.StreamCount())
+	}
+	if err := h.CloseStream(streamID); err != nil {
+		t.Fatalf("cleanup new generation: %v", err)
 	}
 }

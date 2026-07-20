@@ -24,6 +24,18 @@ type CronClass struct {
 	*cron.Cron
 	pendingAlertTriggerTasksMu sync.Mutex
 	pendingAlertTriggerTasks   map[uint64]map[uint64][]time.Time
+	closeOnce                  sync.Once
+}
+
+// Close stops the scheduler and joins every job before a test restores globals.
+// The embedded cron.Stop only exposes the completion context; callers must await it.
+func (c *CronClass) Close() {
+	if c == nil || c.Cron == nil {
+		return
+	}
+	c.closeOnce.Do(func() {
+		<-c.Cron.Stop().Done()
+	})
 }
 
 func NewCronClass() *CronClass {

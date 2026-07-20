@@ -120,6 +120,9 @@ func (iw *IOStreamWrapper) Write(p []byte) (n int, err error) {
 func (iw *IOStreamWrapper) Close() error {
 	if iw.closed.CompareAndSwap(false, true) {
 		close(iw.closeCh)
+		if closer, ok := iw.IOStream.(interface{ Close() error }); ok {
+			return closer.Close()
+		}
 	}
 	return nil
 }

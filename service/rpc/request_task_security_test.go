@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/i18n"
 	pb "github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
@@ -257,7 +258,10 @@ func setupRequestTaskSecurityFixture(t *testing.T, servers []*model.Server, cron
 	originalDB := singleton.DB
 	originalConf := singleton.Conf
 	originalLoc := singleton.Loc
+	originalLocalizer := singleton.Localizer
+	originalNotification := singleton.NotificationShared
 	originalServerShared := singleton.ServerShared
+	originalServiceSentinel := singleton.ServiceSentinelShared
 	originalCronShared := singleton.CronShared
 	originalUserInfoMap := singleton.UserInfoMap
 	originalAgentSecretToUserID := singleton.AgentSecretToUserId
@@ -275,6 +279,8 @@ func setupRequestTaskSecurityFixture(t *testing.T, servers []*model.Server, cron
 	singleton.DB = db
 	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{}}
 	singleton.Loc = time.UTC
+	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
+	singleton.NotificationShared = singleton.NewEmptyNotificationClassForTest()
 	if err := singleton.DB.AutoMigrate(model.Server{}, model.Cron{}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,13 +303,14 @@ func setupRequestTaskSecurityFixture(t *testing.T, servers []*model.Server, cron
 	singleton.CronShared = singleton.NewCronClass()
 
 	t.Cleanup(func() {
-		if singleton.CronShared != nil && singleton.CronShared.Cron != nil {
-			singleton.CronShared.Stop()
-		}
-		sqlDB.Close()
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Conf = originalConf
 		singleton.Loc = originalLoc
+		singleton.Localizer = originalLocalizer
+		singleton.NotificationShared = originalNotification
+		singleton.ServiceSentinelShared = originalServiceSentinel
 		singleton.ServerShared = originalServerShared
 		singleton.CronShared = originalCronShared
 		singleton.UserLock.Lock()
