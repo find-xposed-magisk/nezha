@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -20,22 +19,6 @@ const (
 	Stdout Stream = "stdout"
 	Stderr Stream = "stderr"
 )
-
-type Spec struct {
-	Name             string
-	Path             string
-	Args             []string
-	Dir              string
-	Env              []string
-	ExtraFiles       []*os.File
-	Stdout           io.Writer
-	Stderr           io.Writer
-	MaxLogBytes      int
-	TerminateTimeout time.Duration
-	KillTimeout      time.Duration
-	Readiness        func(Stream, string) bool
-	Credential       *syscall.Credential
-}
 
 type Supervisor struct {
 	ctx         context.Context
@@ -62,10 +45,10 @@ func NewSupervisor(ctx context.Context, spec Spec) *Supervisor {
 }
 
 func (supervisor *Supervisor) Start() error {
-	if supervisor.spec.Name == "" || supervisor.spec.Path == "" || supervisor.spec.MaxLogBytes < 1 || supervisor.spec.TerminateTimeout <= 0 || supervisor.spec.KillTimeout <= 0 {
-		return errors.New("invalid process specification")
+	if err := supervisor.spec.validate(); err != nil {
+		return err
 	}
-	command := exec.Command(supervisor.spec.Path, supervisor.spec.Args...)
+	command := exec.Command(supervisor.spec.Path, supervisor.spec.Args...) // #nosec G204 -- Absolute executable regular-file path is validated before fixed argv execution; no shell is invoked.
 	command.Dir = supervisor.spec.Dir
 	command.Env = supervisor.spec.Env
 	if command.Env == nil {

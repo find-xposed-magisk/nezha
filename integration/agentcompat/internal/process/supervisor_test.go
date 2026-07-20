@@ -29,6 +29,31 @@ func TestSupervisor_CleanExit(t *testing.T) {
 	requireNoError(t, supervisor.Wait(t.Context()))
 }
 
+func TestSupervisor_StartRejectsUntrustedExecutablePaths(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "relative", path: "relative-helper"},
+		{name: "directory", path: t.TempDir()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Given
+			supervisor := newHelperSupervisor(t.Context(), "clean", nil)
+			supervisor.spec.Path = test.path
+
+			// When
+			err := supervisor.Start()
+
+			// Then
+			if err == nil {
+				t.Fatal("untrusted process path was accepted")
+			}
+		})
+	}
+}
+
 func TestSupervisor_RunsChildWithConfiguredCredential(t *testing.T) {
 	// Given
 	credentialDirectory, err := os.MkdirTemp("/tmp", "agentcompat-credential-")
