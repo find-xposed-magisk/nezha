@@ -5,11 +5,11 @@ package process
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -33,6 +33,12 @@ type SQLiteJournalWatch struct {
 	mu          sync.Mutex
 	closeSeen   bool
 	deleted     bool
+}
+
+type inotifyEvent struct {
+	watchDescriptor int32
+	mask            uint32
+	name            []byte
 }
 
 func OpenSQLiteJournalWatch(path string) (*SQLiteJournalWatch, error) {
@@ -140,20 +146,33 @@ func (watch *SQLiteJournalWatch) readEvents() error {
 	if err != nil {
 		return err
 	}
-	for offset := 0; offset+unix.SizeofInotifyEvent <= count; {
-		event := (*unix.InotifyEvent)(unsafe.Pointer(&buffer[offset]))
-		next := offset + unix.SizeofInotifyEvent + int(event.Len)
-		if next > count {
+	for offset := 0; offset < count; {
+		event, consumed, err := decodeInotifyEvent(buffer[offset:count])
+		if err != nil {
 			return &SQLiteJournalLifecycleError{}
 		}
-		nameStart := offset + unix.SizeofInotifyEvent
-		name := bytes.TrimRight(buffer[nameStart:next], "\x00")
-		if err := watch.observeEvent(event.Wd, event.Mask, name); err != nil {
+		if err := watch.observeEvent(event.watchDescriptor, event.mask, event.name); err != nil {
 			return err
 		}
-		offset = next
+		offset += consumed
 	}
 	return nil
+}
+
+func decodeInotifyEvent(buffer []byte) (inotifyEvent, int, error) {
+	if len(buffer) < unix.SizeofInotifyEvent {
+		return inotifyEvent{}, 0, errors.New("truncated inotify header")
+	}
+	nameLength := binary.NativeEndian.Uint32(buffer[12:])
+	if uint64(nameLength) > uint64(len(buffer)-unix.SizeofInotifyEvent) {
+		return inotifyEvent{}, 0, errors.New("truncated inotify name")
+	}
+	consumed64 := uint64(unix.SizeofInotifyEvent) + uint64(nameLength)
+	if consumed64 > uint64(^uint(0)>>1) {
+		return inotifyEvent{}, 0, errors.New("inotify event exceeds int range")
+	}
+	consumed := int(consumed64)
+	return inotifyEvent{watchDescriptor: int32(binary.NativeEndian.Uint32(buffer)), mask: binary.NativeEndian.Uint32(buffer[4:]), name: bytes.TrimRight(buffer[unix.SizeofInotifyEvent:consumed], "\x00")}, consumed, nil
 }
 
 func (watch *SQLiteJournalWatch) observeEvent(watchDescriptor int32, mask uint32, name []byte) error {

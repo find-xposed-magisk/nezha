@@ -4,6 +4,7 @@ package process
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -129,6 +130,65 @@ func TestSQLiteJournalWatch_RejectsDuplicateTerminalEvent(t *testing.T) {
 	// Then
 	if !errors.Is(err, ErrSQLiteJournalLifecycle) {
 		t.Fatalf("duplicate terminal error = %v, want lifecycle error", err)
+	}
+}
+
+func TestSQLiteJournalWatch_ReadEventsRejectsTruncatedName(t *testing.T) {
+	// Given
+	pipe := make([]int, 2)
+	requireNoError(t, unix.Pipe(pipe))
+	readFD, writeFD := pipe[0], pipe[1]
+	t.Cleanup(func() { requireNoError(t, unix.Close(readFD)) })
+	t.Cleanup(func() { requireNoError(t, unix.Close(writeFD)) })
+	watch := &SQLiteJournalWatch{inotifyFD: readFD}
+	buffer := make([]byte, unix.SizeofInotifyEvent)
+	binary.NativeEndian.PutUint32(buffer[12:], 1)
+	_, err := unix.Write(writeFD, buffer)
+	requireNoError(t, err)
+
+	// When
+	err = watch.readEvents()
+
+	// Then
+	if !errors.Is(err, ErrSQLiteJournalLifecycle) {
+		t.Fatalf("truncated event error=%v, want lifecycle error", err)
+	}
+}
+
+func TestDecodeInotifyEvent_DecodesUnalignedNativeEndianEvent(t *testing.T) {
+	// Given
+	name := []byte("journal\x00\x00")
+	buffer := append([]byte{0xff}, make([]byte, unix.SizeofInotifyEvent+len(name))...)
+	eventBytes := buffer[1:]
+	binary.NativeEndian.PutUint32(eventBytes, 17)
+	binary.NativeEndian.PutUint32(eventBytes[4:], unix.IN_DELETE)
+	binary.NativeEndian.PutUint32(eventBytes[12:], uint32(len(name)))
+	copy(eventBytes[unix.SizeofInotifyEvent:], name)
+
+	// When
+	event, consumed, err := decodeInotifyEvent(eventBytes)
+
+	// Then
+	requireNoError(t, err)
+	if event.watchDescriptor != 17 || event.mask != unix.IN_DELETE || string(event.name) != "journal" {
+		t.Fatalf("event=%+v", event)
+	}
+	if consumed != len(eventBytes) {
+		t.Fatalf("consumed=%d, want %d", consumed, len(eventBytes))
+	}
+}
+
+func TestDecodeInotifyEvent_RejectsTruncatedName(t *testing.T) {
+	// Given
+	buffer := make([]byte, unix.SizeofInotifyEvent)
+	binary.NativeEndian.PutUint32(buffer[12:], 1)
+
+	// When
+	_, _, err := decodeInotifyEvent(buffer)
+
+	// Then
+	if err == nil {
+		t.Fatal("truncated inotify name was accepted")
 	}
 }
 
