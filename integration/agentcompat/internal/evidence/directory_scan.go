@@ -26,8 +26,8 @@ func scanDirectory(resultsDir string) (map[string]os.FileInfo, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, errors.New("evidence path must be a directory")
 	}
-	if info.Mode().Perm() != 0o700 {
-		return nil, errors.New("evidence directory must use mode 0700")
+	if err := validateEvidenceDirectoryMode(info); err != nil {
+		return nil, err
 	}
 	seen := make(map[string]os.FileInfo)
 	var totalBytes int64
@@ -65,8 +65,8 @@ func scanDirectory(resultsDir string) (map[string]os.FileInfo, error) {
 		if !allowedEvidencePath(relative) {
 			return fmt.Errorf("evidence path is not allowed: %s", relative)
 		}
-		if fileInfo.Mode().Perm() != 0o600 {
-			return fmt.Errorf("evidence file must use mode 0600: %s", relative)
+		if err := validateEvidenceFileMode(fileInfo, relative); err != nil {
+			return err
 		}
 		seen[relative] = fileInfo
 		if len(seen) > maxEvidenceFiles {
