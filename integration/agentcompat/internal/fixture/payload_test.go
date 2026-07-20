@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"testing"
 
 	"github.com/nezhahq/nezha/integration/agentcompat/internal/contract"
@@ -17,19 +16,13 @@ func TestFixture_StreamsExact100MiB(t *testing.T) {
 	// Given
 	payload, err := NewPayload(contract.DefaultSeed, contract.TransferBytes)
 	requireNoFixtureError(t, err)
-	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
 
 	// When
-	digest, err := VerifyPayload(payload.Reader(), contract.TransferBytes)
+	digest, peakRetainedHeap, err := verifyPayloadPeakRetainedHeap(payload.Reader(), contract.TransferBytes)
 	requireNoFixtureError(t, err)
 	stableDigest, err := VerifyPayload(payload.Reader(), contract.TransferBytes)
 	requireNoFixtureError(t, err)
 	independentDigest := independentlyHashPayload(contract.DefaultSeed, contract.TransferBytes)
-	runtime.GC()
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
 
 	// Then
 	if digest.Bytes != contract.TransferBytes {
@@ -41,14 +34,13 @@ func TestFixture_StreamsExact100MiB(t *testing.T) {
 	if digest.SHA256 != independentDigest {
 		t.Fatalf("payload SHA does not match independent generator: %s", digest.Hex())
 	}
-	var retained uint64
-	if after.HeapAlloc > before.HeapAlloc {
-		retained = after.HeapAlloc - before.HeapAlloc
+	if peakRetainedHeap == 0 {
+		t.Fatal("peak retained heap measurement did not observe live streaming allocations")
 	}
-	if retained > contract.TransferHeapBytes {
-		t.Fatalf("retained heap = %d, limit = %d", retained, contract.TransferHeapBytes)
+	if peakRetainedHeap > contract.TransferHeapBytes {
+		t.Fatalf("peak retained heap = %d, limit = %d", peakRetainedHeap, contract.TransferHeapBytes)
 	}
-	t.Logf("bytes=%d sha256=%s retained_heap=%d", digest.Bytes, digest.Hex(), retained)
+	t.Logf("bytes=%d sha256=%s peak_retained_heap=%d", digest.Bytes, digest.Hex(), peakRetainedHeap)
 }
 
 func independentlyHashPayload(seed contract.Seed, size uint64) [sha256.Size]byte {

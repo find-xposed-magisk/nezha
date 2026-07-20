@@ -3,11 +3,13 @@ package fixture
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -78,8 +80,37 @@ func TestFixture_NATEcho(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(responseBody) != expected {
 		t.Fatalf("NAT echo response = %d %q", response.StatusCode, responseBody)
 	}
-	if record.RequestHalfClosed || record.Method != http.MethodPut || record.Host != "nat.invalid" {
+	if record.RequestHalfClosed || record.ResponseHalfClosed || record.Method != http.MethodPut || record.Host != "nat.invalid" {
 		t.Fatalf("NAT request record = %+v", record)
+	}
+}
+
+func TestFixture_NATResponseHalfCloseEcho(t *testing.T) {
+	// Given
+	backend, err := StartNATResponseHalfCloseEchoBackend()
+	requireNoFixtureError(t, err)
+	t.Cleanup(func() { requireNoFixtureError(t, backend.Close()) })
+	connection, err := net.DialTimeout("tcp", backend.Address(), time.Second)
+	requireNoFixtureError(t, err)
+	defer connection.Close()
+	requireNoFixtureError(t, connection.SetDeadline(time.Now().Add(2*time.Second)))
+
+	// When
+	_, err = io.WriteString(connection, "GET /response-half-close HTTP/1.1\r\nHost: nat.invalid\r\nContent-Length: 0\r\n\r\n")
+	requireNoFixtureError(t, err)
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	requireNoFixtureError(t, err)
+	_, err = io.ReadAll(response.Body)
+	requireNoFixtureError(t, err)
+	requireNoFixtureError(t, response.Body.Close())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	record, err := backend.WaitRequest(ctx)
+	requireNoFixtureError(t, err)
+
+	// Then
+	if !record.ResponseHalfClosed || record.RequestHalfClosed {
+		t.Fatalf("NAT response half-close record = %+v", record)
 	}
 }
 
@@ -131,4 +162,72 @@ func TestFixture_NATEchoCloseTerminatesSockets(t *testing.T) {
 		_ = connection.Close()
 		t.Fatal("NAT listener accepted a connection after backend close")
 	}
+}
+
+func TestFixture_NATEchoCloseIsConcurrentAndIdempotent(t *testing.T) {
+	// Given
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	requireNoFixtureError(t, err)
+	closeFailure := errors.New("injected listener close failure")
+	backend := newNATEchoBackend(closeErrorListener{Listener: listener, err: closeFailure}, false, false)
+	connection, err := net.DialTimeout("tcp", backend.Address(), time.Second)
+	requireNoFixtureError(t, err)
+	defer connection.Close()
+	_, err = io.WriteString(connection, "GET /incomplete HTTP/1.1\r\nHost: nat.invalid\r\n")
+	requireNoFixtureError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	requireNoFixtureError(t, backend.WaitConnection(ctx))
+
+	// When
+	const callers = 16
+	start := make(chan struct{})
+	closeErrors := make(chan error, callers)
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(callers)
+	for range callers {
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			closeErrors <- backend.Close()
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	close(closeErrors)
+
+	// Then
+	for closeErr := range closeErrors {
+		if !errors.Is(closeErr, closeFailure) {
+			t.Fatalf("concurrent close error = %v, want %v", closeErr, closeFailure)
+		}
+	}
+	if closeErr := backend.Close(); !errors.Is(closeErr, closeFailure) {
+		t.Fatalf("repeated close error = %v, want %v", closeErr, closeFailure)
+	}
+}
+
+type closeErrorListener struct {
+	net.Listener
+	err error
+}
+
+func (listener closeErrorListener) Close() error {
+	_ = listener.Listener.Close()
+	return listener.err
+}
+
+func (listener closeErrorListener) Accept() (net.Conn, error) {
+	connection, err := listener.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return alreadyClosedErrorConn{Conn: connection}, nil
+}
+
+type alreadyClosedErrorConn struct{ net.Conn }
+
+func (connection alreadyClosedErrorConn) Close() error {
+	_ = connection.Conn.Close()
+	return net.ErrClosed
 }

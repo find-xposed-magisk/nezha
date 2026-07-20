@@ -9,15 +9,19 @@ import (
 	"net"
 	"net/http"
 	"sync"
+
+	"github.com/nezhahq/nezha/pkg/agentcompatcontract"
 )
 
 type NATEchoRecord struct {
-	Method            string
-	Path              string
-	Host              string
-	HeaderValue       string
-	Body              []byte
-	RequestHalfClosed bool
+	Method                  string
+	Path                    string
+	Host                    string
+	HeaderValue             string
+	Body                    []byte
+	RequestHalfClosed       bool
+	ResponseHalfClosed      bool
+	SensitiveHeadersPresent bool
 }
 
 type natEchoResult struct {
@@ -26,42 +30,53 @@ type natEchoResult struct {
 }
 
 type NATEchoBackend struct {
-	listener         net.Listener
-	results          chan natEchoResult
-	done             chan struct{}
-	connectionsReady chan struct{}
-	requireHalfClose bool
-	closeOnce        sync.Once
-	waitGroup        sync.WaitGroup
-	mutex            sync.Mutex
-	connections      map[net.Conn]struct{}
-	closing          bool
+	listener                net.Listener
+	results                 chan natEchoResult
+	done                    chan struct{}
+	connectionsReady        chan struct{}
+	requireRequestHalfClose bool
+	halfCloseResponse       bool
+	closeOnce               sync.Once
+	closeErr                error
+	waitGroup               sync.WaitGroup
+	mutex                   sync.Mutex
+	connections             map[net.Conn]struct{}
+	closing                 bool
 }
 
 func StartNATEchoBackend() (*NATEchoBackend, error) {
-	return startNATEchoBackend(false)
+	return startNATEchoBackend(false, false)
 }
 
 func StartNATHalfCloseEchoBackend() (*NATEchoBackend, error) {
-	return startNATEchoBackend(true)
+	return startNATEchoBackend(true, false)
 }
 
-func startNATEchoBackend(requireHalfClose bool) (*NATEchoBackend, error) {
+func StartNATResponseHalfCloseEchoBackend() (*NATEchoBackend, error) {
+	return startNATEchoBackend(false, true)
+}
+
+func startNATEchoBackend(requireRequestHalfClose, halfCloseResponse bool) (*NATEchoBackend, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for NAT echo: %w", err)
 	}
+	return newNATEchoBackend(listener, requireRequestHalfClose, halfCloseResponse), nil
+}
+
+func newNATEchoBackend(listener net.Listener, requireRequestHalfClose, halfCloseResponse bool) *NATEchoBackend {
 	backend := &NATEchoBackend{
-		listener:         listener,
-		results:          make(chan natEchoResult, 16),
-		done:             make(chan struct{}),
-		connectionsReady: make(chan struct{}, 16),
-		requireHalfClose: requireHalfClose,
-		connections:      make(map[net.Conn]struct{}),
+		listener:                listener,
+		results:                 make(chan natEchoResult, 16),
+		done:                    make(chan struct{}),
+		connectionsReady:        make(chan struct{}, 16),
+		requireRequestHalfClose: requireRequestHalfClose,
+		halfCloseResponse:       halfCloseResponse,
+		connections:             make(map[net.Conn]struct{}),
 	}
 	backend.waitGroup.Add(1)
 	go backend.accept()
-	return backend, nil
+	return backend
 }
 
 func (backend *NATEchoBackend) Address() string {
@@ -91,10 +106,9 @@ func (backend *NATEchoBackend) WaitConnection(ctx context.Context) error {
 }
 
 func (backend *NATEchoBackend) Close() error {
-	var closeErr error
 	backend.closeOnce.Do(func() {
 		close(backend.done)
-		closeErr = backend.listener.Close()
+		backend.closeErr = normalizeNATEchoCloseError(backend.listener.Close())
 		backend.mutex.Lock()
 		backend.closing = true
 		connections := make([]net.Conn, 0, len(backend.connections))
@@ -103,14 +117,20 @@ func (backend *NATEchoBackend) Close() error {
 		}
 		backend.mutex.Unlock()
 		for _, connection := range connections {
-			closeErr = errors.Join(closeErr, connection.Close())
+			backend.closeErr = errors.Join(backend.closeErr, normalizeNATEchoCloseError(connection.Close()))
 		}
 		backend.waitGroup.Wait()
 	})
-	if errors.Is(closeErr, net.ErrClosed) {
+	// sync.Once publishes the first shutdown result after cleanup completes, so
+	// concurrent and repeated callers observe the same outcome.
+	return backend.closeErr
+}
+
+func normalizeNATEchoCloseError(err error) error {
+	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}
-	return closeErr
+	return err
 }
 
 func (backend *NATEchoBackend) accept() {
@@ -164,7 +184,7 @@ func (backend *NATEchoBackend) handle(connection net.Conn) {
 		return
 	}
 	halfClosed := false
-	if backend.requireHalfClose {
+	if backend.requireRequestHalfClose {
 		_, halfCloseErr := reader.ReadByte()
 		halfClosed = errors.Is(halfCloseErr, io.EOF)
 		if halfCloseErr != nil && !halfClosed {
@@ -173,12 +193,13 @@ func (backend *NATEchoBackend) handle(connection net.Conn) {
 		}
 	}
 	record := NATEchoRecord{
-		Method:            request.Method,
-		Path:              request.URL.RequestURI(),
-		Host:              request.Host,
-		HeaderValue:       request.Header.Get("X-AgentCompat-Echo"),
-		Body:              append([]byte(nil), body...),
-		RequestHalfClosed: halfClosed,
+		Method:                  request.Method,
+		Path:                    request.URL.RequestURI(),
+		Host:                    request.Host,
+		HeaderValue:             request.Header.Get("X-AgentCompat-Echo"),
+		Body:                    append([]byte(nil), body...),
+		RequestHalfClosed:       halfClosed,
+		SensitiveHeadersPresent: request.Header.Get(agentcompatcontract.IOStreamCapabilityHeader) != "" || request.Header.Get("Authorization") != "",
 	}
 	responseBody := fmt.Sprintf("method=%s\npath=%s\nhost=%s\nx-agentcompat-echo=%s\nbody=%s\n", record.Method, record.Path, record.Host, record.HeaderValue, record.Body)
 	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(responseBody), responseBody)
@@ -186,11 +207,12 @@ func (backend *NATEchoBackend) handle(connection net.Conn) {
 		backend.publish(natEchoResult{err: fmt.Errorf("write NAT echo response: %w", err)})
 		return
 	}
-	if tcpConnection, ok := connection.(*net.TCPConn); ok {
+	if tcpConnection, ok := connection.(*net.TCPConn); ok && backend.halfCloseResponse {
 		if err := tcpConnection.CloseWrite(); err != nil {
 			backend.publish(natEchoResult{err: fmt.Errorf("half-close NAT echo response: %w", err)})
 			return
 		}
+		record.ResponseHalfClosed = true
 	}
 	backend.publish(natEchoResult{record: record})
 }
