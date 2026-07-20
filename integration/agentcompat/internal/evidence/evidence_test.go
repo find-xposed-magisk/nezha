@@ -3,6 +3,8 @@ package evidence
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +37,11 @@ func TestEvidence_Golden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct profile: %v", err)
 	}
-	paths, err := contract.NewPaths("/src/nezha", "/src/agent", "/tmp/results")
+	root := t.TempDir()
+	nezhaSource := filepath.Join(root, "nezha-source")
+	agentSource := filepath.Join(root, "agent-source")
+	resultsDir := filepath.Join(root, "results")
+	paths, err := contract.NewPaths(nezhaSource, agentSource, resultsDir)
 	if err != nil {
 		t.Fatalf("construct paths: %v", err)
 	}
@@ -54,7 +60,7 @@ func TestEvidence_Golden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
 	}
-	const wantJSON = `{"agent_source":"/src/agent","evidence_files":["metadata.json","results.json","junit.xml","dashboard.log","agents/*.log","transfer.json","reconnect.json","stress.json","cleanup.json","step-summary.md"],"load_classification":"regression loads, not capacity claims","nezha_source":"/src/nezha","profile":{"name":"pr-full","job_timeout_seconds":4500,"suite_deadline_seconds":3300,"default_seed":"0x4e5a4841","agent_count":8,"stress_rounds":4,"concurrent_operations":64,"concurrent_sessions_per_kind":4,"transfer_pairs":1,"transfer_bytes":104857600,"dashboard_restart_cycles":1,"iterations":1,"stream_boundary_allowed":40,"stream_boundary_rejected":41},"resource_budget":{"warmup_runs_per_path":1,"baseline_sample_count":5,"end_sample_count":5,"sample_interval_milliseconds":250,"child_process_count_drift":0,"listener_count_drift":0,"non_stdio_fd_count_drift":0,"dashboard_rss_delta_bytes":67108864,"agent_rss_delta_bytes":33554432,"transfer_heap_bytes":16777216},"results_dir":"/tmp/results","scenarios":[],"seed":"0x4e5a4841","started_at":"2026-01-02T03:04:05Z"}`
+	wantJSON := fmt.Sprintf(`{"agent_source":%q,"evidence_files":["metadata.json","results.json","junit.xml","dashboard.log","agents/*.log","transfer.json","reconnect.json","stress.json","cleanup.json","step-summary.md"],"load_classification":"regression loads, not capacity claims","nezha_source":%q,"profile":{"name":"pr-full","job_timeout_seconds":4500,"suite_deadline_seconds":3300,"default_seed":"0x4e5a4841","agent_count":8,"stress_rounds":4,"concurrent_operations":64,"concurrent_sessions_per_kind":4,"transfer_pairs":1,"transfer_bytes":104857600,"dashboard_restart_cycles":1,"iterations":1,"stream_boundary_allowed":40,"stream_boundary_rejected":41},"resource_budget":{"warmup_runs_per_path":1,"baseline_sample_count":5,"end_sample_count":5,"sample_interval_milliseconds":250,"child_process_count_drift":0,"listener_count_drift":0,"non_stdio_fd_count_drift":0,"dashboard_rss_delta_bytes":67108864,"agent_rss_delta_bytes":33554432,"transfer_heap_bytes":16777216},"results_dir":%q,"scenarios":[],"seed":"0x4e5a4841","started_at":"2026-01-02T03:04:05Z"}`, agentSource, nezhaSource, resultsDir)
 	if string(data) != wantJSON {
 		t.Fatalf("metadata golden mismatch\nwant: %s\ngot:  %s", wantJSON, data)
 	}
