@@ -110,6 +110,14 @@ jobs:
         with:
           go-version: "1.26.x"
           cache: false
+      - name: Prepare Dashboard build inputs
+        working-directory: nezha
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@v1.16.6
+          mkdir -p cmd/dashboard/user-dist cmd/dashboard/admin-dist
+          printf 'placeholder\n' > cmd/dashboard/user-dist/placeholder.txt
+          printf 'placeholder\n' > cmd/dashboard/admin-dist/placeholder.txt
+          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
       - name: Require named stress test
         working-directory: nezha
         run: go test -mod=readonly -tags=agentcompat -list '^TestStressPRFullEightAgentExactlyOnce$' ./integration/agentcompat/internal/scenario | grep -Fx 'TestStressPRFullEightAgentExactlyOnce'

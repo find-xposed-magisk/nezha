@@ -1,6 +1,7 @@
 package workflowpolicy_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,22 @@ func TestPolicy_NezhaStressWorkflowRunsPinnedCrossRepositoryTest(t *testing.T) {
 	require.Equal(t, "Linux agent compatibility stress", stressJob.Name)
 	require.Equal(t, "ubuntu-24.04", stressJob.RunsOn)
 	require.Equal(t, 75, stressJob.TimeoutMinutes)
-	require.Len(t, stressJob.Steps, 5)
+	require.Len(t, stressJob.Steps, 6)
+	require.Equal(t, []string{
+		"Checkout Nezha revision",
+		"Checkout pinned Agent revision",
+		"Set up Go",
+		"Prepare Dashboard build inputs",
+		"Require named stress test",
+		"Run PR-full agent compatibility stress",
+	}, []string{
+		stressJob.Steps[0].Name,
+		stressJob.Steps[1].Name,
+		stressJob.Steps[2].Name,
+		stressJob.Steps[3].Name,
+		stressJob.Steps[4].Name,
+		stressJob.Steps[5].Name,
+	})
 
 	nezhaCheckout := stressJob.stepNamed(t, "Checkout Nezha revision")
 	require.Equal(t, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", nezhaCheckout.Uses)
@@ -43,6 +59,16 @@ func TestPolicy_NezhaStressWorkflowRunsPinnedCrossRepositoryTest(t *testing.T) {
 	require.Equal(t, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16", setupGo.Uses)
 	require.Equal(t, "1.26.x", setupGo.With.GoVersion)
 	require.False(t, *setupGo.With.Cache)
+
+	prepareDashboardInputs := stressJob.stepNamed(t, "Prepare Dashboard build inputs")
+	require.Equal(t, "nezha", prepareDashboardInputs.WorkingDirectory)
+	require.Equal(t, strings.Join([]string{
+		"go install github.com/swaggo/swag/cmd/swag@v1.16.6",
+		"mkdir -p cmd/dashboard/user-dist cmd/dashboard/admin-dist",
+		"printf 'placeholder\\n' > cmd/dashboard/user-dist/placeholder.txt",
+		"printf 'placeholder\\n' > cmd/dashboard/admin-dist/placeholder.txt",
+		"swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs",
+	}, "\n"), strings.TrimSpace(prepareDashboardInputs.Run))
 
 	listStep := stressJob.stepNamed(t, "Require named stress test")
 	require.Equal(t, "nezha", listStep.WorkingDirectory)
