@@ -9,20 +9,20 @@ import (
 	"github.com/nezhahq/nezha/integration/agentcompat/internal/contract"
 )
 
-func validateDedicatedArtifact(resultsDir string, metadata Metadata, result ScenarioResult) error {
+func validateDedicatedArtifact(files evidenceSnapshot, metadata Metadata, result ScenarioResult) error {
 	definition, err := contract.ScenarioDefinitionByName(result.Name)
 	if err != nil {
 		return err
 	}
 	switch definition.DedicatedArtifact {
 	case contract.DedicatedArtifactTransfer:
-		artifact, err := readJSONFile[transferArtifact](resultsDir, "transfer.json")
+		artifact, err := readJSONFile[transferArtifact](files, "transfer.json")
 		if err != nil {
 			return err
 		}
 		return validateTransferArtifact(metadata, result, artifact)
 	case contract.DedicatedArtifactReconnect:
-		artifact, err := readJSONFile[reconnectArtifact](resultsDir, "reconnect.json")
+		artifact, err := readJSONFile[reconnectArtifact](files, "reconnect.json")
 		if err != nil {
 			return err
 		}

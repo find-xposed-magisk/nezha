@@ -38,3 +38,73 @@ func TestEvidence_ValidateDirectoryRejectsUnexpectedPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestEvidence_ValidateDirectoryRejectsSymlinkReplacementOutsideRoot(t *testing.T) {
+	// Given
+	dir := t.TempDir()
+	writeExecutableEvidence(t, dir, "pr-full", contract.ScenarioRegistrationConfigExec, true, true, true)
+	outside := filepath.Join(t.TempDir(), "outside-metadata.json")
+	if err := os.WriteFile(outside, []byte(`{"profile":"outside"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadata := filepath.Join(dir, "metadata.json")
+	if err := os.Remove(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	err := ValidateDirectory(dir)
+
+	// Then
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlink replacement error=%v", err)
+	}
+}
+
+func TestEvidence_ValidateDirectoryRejectsResultsRootSymlink(t *testing.T) {
+	// Given
+	resultsDir := t.TempDir()
+	writeExecutableEvidence(t, resultsDir, "pr-full", contract.ScenarioRegistrationConfigExec, true, true, true)
+	symlink := filepath.Join(t.TempDir(), "results-link")
+	if err := os.Symlink(resultsDir, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	err := ValidateDirectory(symlink)
+
+	// Then
+	if err == nil || !strings.Contains(err.Error(), "must be a directory") {
+		t.Fatalf("results root symlink error=%v", err)
+	}
+}
+
+func TestEvidence_ValidateSnapshotUsesCapturedBytesAfterDiskMutation(t *testing.T) {
+	// Given
+	dir := t.TempDir()
+	writeExecutableEvidence(t, dir, "pr-full", contract.ScenarioRegistrationConfigExec, true, true, true)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	snapshot, err := scanDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeEvidenceFile(t, dir, "metadata.json", `{}`)
+	writeEvidenceFile(t, dir, "results.json", `{}`)
+	writeEvidenceFile(t, dir, "junit.xml", `<testsuite name="replaced"></testsuite>`)
+	writeEvidenceFile(t, dir, "cleanup.json", `{}`)
+
+	// When
+	err = validateSnapshot(snapshot)
+
+	// Then
+	if err != nil {
+		t.Fatalf("captured evidence was changed by later disk mutation: %v", err)
+	}
+}

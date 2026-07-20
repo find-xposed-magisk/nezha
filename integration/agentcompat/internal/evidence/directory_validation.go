@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/nezhahq/nezha/integration/agentcompat/internal/contract"
@@ -66,14 +66,33 @@ func currentProfile(metadata Metadata) (currentEvidenceProfile, error) {
 }
 
 func ValidateDirectory(resultsDir string) error {
-	files, err := scanDirectory(resultsDir)
+	if strings.TrimSpace(resultsDir) == "" {
+		return errors.New("evidence directory is required")
+	}
+	info, err := os.Lstat(resultsDir)
+	if err != nil {
+		return fmt.Errorf("stat evidence directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("evidence path must be a directory")
+	}
+	root, err := os.OpenRoot(resultsDir)
+	if err != nil {
+		return fmt.Errorf("open evidence directory: %w", err)
+	}
+	defer root.Close()
+	files, err := scanDirectory(root)
 	if err != nil {
 		return err
 	}
+	return validateSnapshot(files)
+}
+
+func validateSnapshot(files evidenceSnapshot) error {
 	if len(files) == 0 {
 		return errors.New("evidence directory contains no files")
 	}
-	metadata, err := readJSONFile[Metadata](resultsDir, "metadata.json")
+	metadata, err := readJSONFile[Metadata](files, "metadata.json")
 	if err != nil {
 		return err
 	}
@@ -95,7 +114,7 @@ func ValidateDirectory(resultsDir string) error {
 	if !profile.Executable {
 		return nil
 	}
-	results, err := readJSONFile[Results](resultsDir, "results.json")
+	results, err := readJSONFile[Results](files, "results.json")
 	if err != nil {
 		return err
 	}
@@ -105,10 +124,10 @@ func ValidateDirectory(resultsDir string) error {
 	if results.Profile != metadata.Profile.Name || !slices.Equal(metadata.Scenarios, scenarioResultNames(results.Scenarios)) {
 		return errors.New("metadata and results do not agree")
 	}
-	if err := validateJUnit(resultsDir, results); err != nil {
+	if err := validateJUnit(files, results); err != nil {
 		return err
 	}
-	cleanup, err := readJSONFile[cleanupEvidence](resultsDir, "cleanup.json")
+	cleanup, err := readJSONFile[cleanupEvidence](files, "cleanup.json")
 	if err != nil {
 		return err
 	}
@@ -126,7 +145,7 @@ func ValidateDirectory(resultsDir string) error {
 		if err := validateScenarioAssertions(results.Scenarios[0], definition.Assertions(metadata.Fault)); err != nil {
 			return err
 		}
-		return validateDedicatedArtifact(resultsDir, metadata, results.Scenarios[0])
+		return validateDedicatedArtifact(files, metadata, results.Scenarios[0])
 	}
 	return nil
 }
@@ -143,7 +162,7 @@ func validateScenarioAssertions(result ScenarioResult, expected []contract.Asser
 	return nil
 }
 
-func rejectStaleDedicatedFiles(files map[string]os.FileInfo, expected string) error {
+func rejectStaleDedicatedFiles(files evidenceSnapshot, expected string) error {
 	for _, name := range []string{"transfer.json", "reconnect.json"} {
 		if _, exists := files[name]; exists && name != expected {
 			return fmt.Errorf("stale or wrong dedicated evidence file: %s", name)
@@ -152,13 +171,13 @@ func rejectStaleDedicatedFiles(files map[string]os.FileInfo, expected string) er
 	return nil
 }
 
-func validateJUnit(resultsDir string, results Results) error {
-	data, err := os.ReadFile(filepath.Join(resultsDir, "junit.xml"))
-	if err != nil {
-		return fmt.Errorf("read JUnit evidence: %w", err)
+func validateJUnit(files evidenceSnapshot, results Results) error {
+	file, exists := files["junit.xml"]
+	if !exists {
+		return errors.New("read JUnit evidence: evidence snapshot is missing")
 	}
 	var suite junitSuite
-	if err := xml.Unmarshal(data, &suite); err != nil {
+	if err := xml.Unmarshal(file.data, &suite); err != nil {
 		return fmt.Errorf("parse JUnit evidence: %w", err)
 	}
 	if suite.Name != results.Profile || suite.Tests != len(results.Scenarios) || suite.Failures != countFailedScenarios(results.Scenarios) || len(suite.Cases) != len(results.Scenarios) {

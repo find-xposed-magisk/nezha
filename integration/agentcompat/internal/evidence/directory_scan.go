@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,11 +17,15 @@ const (
 	maxEvidenceBytes = 32 << 20
 )
 
-func scanDirectory(resultsDir string) (map[string]os.FileInfo, error) {
-	if strings.TrimSpace(resultsDir) == "" {
-		return nil, errors.New("evidence directory is required")
-	}
-	info, err := os.Lstat(resultsDir)
+type evidenceFile struct {
+	info os.FileInfo
+	data []byte
+}
+
+type evidenceSnapshot map[string]evidenceFile
+
+func scanDirectory(root *os.Root) (evidenceSnapshot, error) {
+	info, err := root.Lstat(".")
 	if err != nil {
 		return nil, fmt.Errorf("stat evidence directory: %w", err)
 	}
@@ -29,61 +35,65 @@ func scanDirectory(resultsDir string) (map[string]os.FileInfo, error) {
 	if err := validateEvidenceDirectoryMode(info); err != nil {
 		return nil, err
 	}
-	seen := make(map[string]os.FileInfo)
+	seen := make(evidenceSnapshot)
 	var totalBytes int64
-	err = filepath.WalkDir(resultsDir, func(path string, entry os.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path == resultsDir {
+		if path == "." {
 			return nil
 		}
 		if entry.IsDir() {
-			relative, err := filepath.Rel(resultsDir, path)
-			if err != nil {
-				return err
-			}
-			if relative != "agents" {
-				return fmt.Errorf("evidence path is not allowed: %s", relative)
+			if path != "agents" {
+				return fmt.Errorf("evidence path is not allowed: %s", path)
 			}
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("evidence symlink is not allowed: %s", path)
 		}
-		if !entry.Type().IsRegular() {
+		if !allowedEvidencePath(path) {
+			return fmt.Errorf("evidence path is not allowed: %s", path)
+		}
+		file, err := root.Open(path)
+		if err != nil {
+			return fmt.Errorf("open evidence file %s: %w", path, err)
+		}
+		fileInfo, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return fmt.Errorf("stat evidence file %s: %w", path, err)
+		}
+		if !fileInfo.Mode().IsRegular() {
+			_ = file.Close()
 			return fmt.Errorf("evidence file is not regular: %s", path)
 		}
-		relative, err := filepath.Rel(resultsDir, path)
-		if err != nil {
+		if err := validateEvidenceFileMode(fileInfo, path); err != nil {
+			_ = file.Close()
 			return err
 		}
-		fileInfo, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !allowedEvidencePath(relative) {
-			return fmt.Errorf("evidence path is not allowed: %s", relative)
-		}
-		if err := validateEvidenceFileMode(fileInfo, relative); err != nil {
-			return err
-		}
-		seen[relative] = fileInfo
-		if len(seen) > maxEvidenceFiles {
+		if len(seen)+1 > maxEvidenceFiles {
+			_ = file.Close()
 			return errors.New("too many evidence files")
 		}
-		totalBytes += fileInfo.Size()
-		if totalBytes > maxEvidenceBytes {
+		remaining := int64(maxEvidenceBytes) - totalBytes
+		data, readErr := io.ReadAll(io.LimitReader(file, remaining+1))
+		closeErr := file.Close()
+		if readErr != nil {
+			return fmt.Errorf("read evidence file %s: %w", path, readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close evidence file %s: %w", path, closeErr)
+		}
+		if int64(len(data)) > remaining {
 			return errors.New("evidence files exceed size limit")
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+		totalBytes += int64(len(data))
 		if Redact(string(data)) != string(data) {
 			return fmt.Errorf("credential detected in evidence file: %s", path)
 		}
-		switch filepath.Ext(path) {
+		switch extension(path) {
 		case ".json":
 			if !json.Valid(data) {
 				return fmt.Errorf("invalid JSON evidence file: %s", path)
@@ -94,6 +104,7 @@ func scanDirectory(resultsDir string) (map[string]os.FileInfo, error) {
 				return fmt.Errorf("invalid XML evidence file: %s: %w", path, err)
 			}
 		}
+		seen[path] = evidenceFile{info: fileInfo, data: data}
 		return nil
 	})
 	return seen, err
@@ -120,14 +131,22 @@ func allowedEvidencePath(relative string) bool {
 	return true
 }
 
-func readJSONFile[T any](resultsDir, name string) (T, error) {
+func readJSONFile[T any](files evidenceSnapshot, name string) (T, error) {
 	var value T
-	data, err := os.ReadFile(filepath.Join(resultsDir, name))
-	if err != nil {
-		return value, fmt.Errorf("read %s: %w", name, err)
+	file, exists := files[name]
+	if !exists {
+		return value, fmt.Errorf("read %s: evidence snapshot is missing", name)
 	}
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := json.Unmarshal(file.data, &value); err != nil {
 		return value, fmt.Errorf("parse %s: %w", name, err)
 	}
 	return value, nil
+}
+
+func extension(path string) string {
+	index := strings.LastIndexByte(path, '.')
+	if index < 0 {
+		return ""
+	}
+	return path[index:]
 }
