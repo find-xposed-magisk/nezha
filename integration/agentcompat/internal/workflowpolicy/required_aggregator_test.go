@@ -30,7 +30,7 @@ func TestPolicy_RejectsInvalidRequiredAggregator(t *testing.T) {
 		data []byte
 	}{
 		{name: "LF", data: workflowData},
-		{name: "CRLF", data: []byte(strings.ReplaceAll(string(workflowData), "\n", "\r\n"))},
+		{name: "CRLF", data: []byte(workflowWithCRLF(string(workflowData)))},
 	}
 	tests := []struct {
 		name        string
@@ -106,6 +106,23 @@ func TestPolicy_RejectsInvalidRequiredAggregator(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkflowWithCRLF_PreservesExistingCRLF(t *testing.T) {
+	// Given
+	workflow := "first\r\nsecond\r\n"
+
+	// When
+	converted := workflowWithCRLF(workflow)
+
+	// Then
+	require.Equal(t, workflow, converted)
+}
+
+func workflowWithCRLF(workflow string) string {
+	// Normalize first so Windows checkouts are not expanded from CRLF to CRCRLF.
+	workflow = strings.ReplaceAll(workflow, "\r\n", "\n")
+	return strings.ReplaceAll(workflow, "\n", "\r\n")
 }
 
 func mutateWorkflow(t *testing.T, data []byte, currentText, invalidText string) string {
