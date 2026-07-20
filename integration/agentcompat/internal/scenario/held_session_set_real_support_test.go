@@ -44,6 +44,14 @@ func TestHeldSessionSetRealPlanUsesCanonicalPRFullTopology(t *testing.T) {
 	}
 }
 
+func TestCanonicalHeldSessionAgentStartConfig_SkipsConnectionCount(t *testing.T) {
+	// When
+	actual := canonicalHeldSessionAgentStartConfig()
+
+	// Then
+	require.True(t, actual.SkipConnectionCount)
+}
+
 func TestHeldSessionSetRealEvidenceRejectsIncompleteAndRedactsArtifact(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.Chmod(root, 0o700))

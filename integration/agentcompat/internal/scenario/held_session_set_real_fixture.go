@@ -40,7 +40,12 @@ func startHeldSessionSetRealFixture(ctx context.Context, paths contract.Paths, p
 	fixture.preparedBinary = prepared
 	for ordinal := 1; ordinal <= heldSessionSetAgentCount; ordinal++ {
 		uuid := fmt.Sprintf("00000000-0000-0000-0000-%012d", 700+ordinal)
-		instance, startErr := agent.Start(ctx, agent.AgentStartConfig{PreparedBinary: prepared, Endpoint: dashboardInstance.Endpoint(), Secret: dashboardInstance.AgentSecret(), UUID: uuid})
+		startConfig := canonicalHeldSessionAgentStartConfig()
+		startConfig.PreparedBinary = prepared
+		startConfig.Endpoint = dashboardInstance.Endpoint()
+		startConfig.Secret = dashboardInstance.AgentSecret()
+		startConfig.UUID = uuid
+		instance, startErr := agent.Start(ctx, startConfig)
 		if startErr != nil {
 			return nil, fixture.close(ctx, startErr)
 		}
@@ -79,6 +84,11 @@ func startHeldSessionSetRealFixture(ctx context.Context, paths contract.Paths, p
 		return nil, fixture.close(ctx, err)
 	}
 	return fixture, nil
+}
+
+func canonicalHeldSessionAgentStartConfig() agent.AgentStartConfig {
+	// Connection counting opens short-lived NETLINK_INET_DIAG descriptors during state reports; exclude probes from stress residue snapshots.
+	return agent.AgentStartConfig{SkipConnectionCount: true}
 }
 
 func validateHeldSessionSetRealFixture(fixture *heldSessionSetRealFixture, plan StressPlan) error {
