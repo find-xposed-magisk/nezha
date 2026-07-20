@@ -64,11 +64,12 @@ func (Reconnect) RunWithEvidence(ctx context.Context, input ReconnectInput) (res
 	if err != nil {
 		return reconnectFinish(assertions, err, reconnectEvidence)
 	}
-	fixturePath, sentinelPath, err := prepareReconnectSentinel(agentRoot)
+	fixturePath, sentinel, err := prepareReconnectSentinel(agentRoot)
 	if err != nil {
 		return reconnectFinish(assertions, err, reconnectEvidence)
 	}
-	sentinelBytes, err := os.ReadFile(sentinelPath)
+	defer sentinel.close()
+	sentinelBytes, err := sentinel.read()
 	if err != nil {
 		return reconnectFinish(assertions, err, reconnectEvidence)
 	}
@@ -98,7 +99,7 @@ func (Reconnect) RunWithEvidence(ctx context.Context, input ReconnectInput) (res
 	assertions.Record("Dashboard disconnect barrier stopped generation one", stoppedRuntime == runtimeBefore && dashboardInstance.RuntimeIdentity().PID == 0, "")
 	if input.DashboardFault == "dashboard-exit" {
 		// This fault returns before the normal lifecycle evidence finalization below.
-		sentinelAfter, sentinelErr := os.ReadFile(sentinelPath)
+		sentinelAfter, sentinelErr := sentinel.read()
 		sentinelUnchanged := sentinelErr == nil && bytes.Equal(sentinelBytes, sentinelAfter)
 		reconnectEvidence.Lifecycle.DisconnectAt = disconnectAt
 		reconnectEvidence.Lifecycle.OutsideRootSentinelUnchanged = sentinelUnchanged
@@ -171,7 +172,7 @@ func (Reconnect) RunWithEvidence(ctx context.Context, input ReconnectInput) (res
 	}
 	taskIDs, resultIDs, duplicates, lost := reconnectReceiptSummary(dashboardPairs, agentPairs)
 	stale := staleReconnectReceiptCount(runtimeBefore.Generation, dashboardPairs, agentPairs)
-	sentinelAfter, err := os.ReadFile(sentinelPath)
+	sentinelAfter, err := sentinel.read()
 	if err != nil {
 		return reconnectFinish(assertions, err, reconnectEvidence)
 	}

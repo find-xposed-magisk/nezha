@@ -110,17 +110,35 @@ func runReconnectRead(ctx context.Context, mcpClient *client.Client, serverID ui
 	return nil
 }
 
-func prepareReconnectSentinel(agentRoot string) (fixturePath, sentinelPath string, err error) {
+type reconnectSentinel struct {
+	root *os.Root
+	name string
+}
+
+func (sentinel reconnectSentinel) read() ([]byte, error) {
+	return sentinel.root.ReadFile(sentinel.name)
+}
+
+func (sentinel reconnectSentinel) close() error { return sentinel.root.Close() }
+
+func prepareReconnectSentinel(agentRoot string) (fixturePath string, sentinel reconnectSentinel, err error) {
 	root, err := fixture.NewAgentRoot(agentRoot, "reconnect-files")
 	if err != nil {
-		return "", "", err
+		return "", reconnectSentinel{}, err
 	}
 	path, err := root.Path("runtime.txt")
 	if err != nil {
-		return "", "", err
+		return "", reconnectSentinel{}, err
 	}
 	fixturePath = path.String()
-	sentinelPath = agentRoot + "/outside-reconnect-sentinel"
-	err = os.WriteFile(sentinelPath, []byte("outside-reconnect-root-sentinel"), 0o600)
-	return fixturePath, sentinelPath, err
+	workspace, err := os.OpenRoot(agentRoot)
+	if err != nil {
+		return "", reconnectSentinel{}, err
+	}
+	sentinel = reconnectSentinel{root: workspace, name: "outside-reconnect-sentinel"}
+	if err := workspace.WriteFile(sentinel.name, []byte("outside-reconnect-root-sentinel"), 0o600); err != nil {
+		_ = workspace.Close()
+		return "", reconnectSentinel{}, err
+	}
+	return fixturePath, sentinel, nil
 }
