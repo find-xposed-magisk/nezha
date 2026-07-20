@@ -15,6 +15,8 @@ import (
 	pb "github.com/nezhahq/nezha/proto"
 )
 
+var runtimeHolderInitMu sync.Mutex
+
 type Server struct {
 	Common
 
@@ -48,6 +50,7 @@ type Server struct {
 	// two independent mutexes, defeating the "one SendMsg goroutine per stream"
 	// invariant grpc-go requires.
 	taskStream  atomic.Pointer[taskStreamHolder]
+	runtime     atomic.Pointer[serverRuntimeHolder]
 	ConfigCache chan any `gorm:"-" json:"-"`
 
 	PrevTransferInSnapshot  uint64 `gorm:"-" json:"-"` // 上次数据点时的入站使用量
@@ -67,6 +70,160 @@ type Server struct {
 type taskStreamHolder struct {
 	s      pb.NezhaService_RequestTaskServer
 	sendMu sync.Mutex
+}
+
+type serverRuntimeHolder struct {
+	mu         sync.Mutex
+	canonical  *Server
+	stream     pb.NezhaService_ReportSystemStateServer
+	generation uint64
+	state      *HostState
+	host       *Host
+	lastActive time.Time
+	prevIn     uint64
+	prevOut    uint64
+}
+
+type StateStreamLease struct {
+	holder     *serverRuntimeHolder
+	generation uint64
+}
+
+func (lease StateStreamLease) Generation() uint64 {
+	return lease.generation
+}
+
+type RuntimeHandle struct {
+	holder *serverRuntimeHolder
+}
+
+type HostReportResult struct {
+	ServerID uint64
+	UUID     string
+	Applied  bool
+	Initial  bool
+	Equal    bool
+	Stale    bool
+	Restart  bool
+	Transfer Transfer
+}
+
+func (s *Server) RuntimeHandle() RuntimeHandle {
+	runtimeHolderInitMu.Lock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		holder = &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), host: cloneHost(s.Host), lastActive: s.LastActive, prevIn: s.PrevTransferInSnapshot, prevOut: s.PrevTransferOutSnapshot}
+		s.runtime.Store(holder)
+	}
+	runtimeHolderInitMu.Unlock()
+	return RuntimeHandle{holder: holder}
+}
+
+func (handle RuntimeHandle) ApplyHostReport(host *Host, createdAt time.Time, persist func(Transfer) error) (HostReportResult, error) {
+	if handle.holder == nil || host == nil {
+		return HostReportResult{}, errors.New("invalid runtime handle")
+	}
+	holder := handle.holder
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	canonical := holder.canonical
+	if canonical == nil {
+		return HostReportResult{}, errors.New("runtime handle has no canonical server")
+	}
+	result := HostReportResult{ServerID: canonical.ID, UUID: canonical.UUID}
+	if holder.host == nil {
+		holder.host = cloneHost(host)
+		canonical.Host = cloneHost(host)
+		result.Applied = true
+		result.Initial = true
+		return result, nil
+	}
+	if host.BootTime < holder.host.BootTime {
+		result.Stale = true
+		return result, nil
+	}
+	if host.BootTime == holder.host.BootTime {
+		holder.host = cloneHost(host)
+		canonical.Host = cloneHost(host)
+		result.Applied = true
+		result.Equal = true
+		return result, nil
+	}
+	result.Restart = true
+	if holder.state != nil {
+		result.Transfer = Transfer{Common: Common{CreatedAt: createdAt}, ServerID: canonical.ID, In: holder.state.NetInTransfer - min(holder.state.NetInTransfer, holder.prevIn), Out: holder.state.NetOutTransfer - min(holder.state.NetOutTransfer, holder.prevOut)}
+	}
+	if persist != nil {
+		if err := persist(result.Transfer); err != nil {
+			return HostReportResult{}, err
+		}
+	}
+	holder.host = cloneHost(host)
+	holder.state = &HostState{}
+	holder.lastActive = time.Time{}
+	holder.prevIn, holder.prevOut = 0, 0
+	canonical.Host = cloneHost(host)
+	canonical.State = &HostState{}
+	canonical.LastActive = time.Time{}
+	canonical.PrevTransferInSnapshot = 0
+	canonical.PrevTransferOutSnapshot = 0
+	result.Applied = true
+	return result, nil
+}
+
+func (lease StateStreamLease) UpdateState(state *HostState, lastActive time.Time) bool {
+	return lease.UpdateStateWithSideEffect(state, lastActive, nil)
+}
+
+func (lease StateStreamLease) UpdateStateWithSideEffect(state *HostState, lastActive time.Time, sideEffect func() error) bool {
+	return lease.updateState(nil, state, lastActive, sideEffect)
+}
+
+func (lease StateStreamLease) updateState(receiver *Server, state *HostState, lastActive time.Time, sideEffect func() error) bool {
+	if lease.holder == nil {
+		return false
+	}
+	lease.holder.mu.Lock()
+	defer lease.holder.mu.Unlock()
+	if lease.holder.generation != lease.generation || lease.holder.stream == nil || lease.holder.canonical == nil || (receiver != nil && lease.holder.canonical != receiver) {
+		return false
+	}
+	canonical := lease.holder.canonical
+	canonical.State = cloneHostState(state)
+	canonical.LastActive = lastActive
+	lease.holder.state = cloneHostState(state)
+	lease.holder.lastActive = lastActive
+	if lease.holder.prevIn == 0 || lease.holder.prevOut == 0 {
+		lease.holder.prevIn = state.NetInTransfer
+		lease.holder.prevOut = state.NetOutTransfer
+	}
+	canonical.PrevTransferInSnapshot = lease.holder.prevIn
+	canonical.PrevTransferOutSnapshot = lease.holder.prevOut
+	if sideEffect != nil {
+		if err := sideEffect(); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (lease StateStreamLease) Clear() bool {
+	return lease.clear(nil)
+}
+
+func (lease StateStreamLease) clear(receiver *Server) bool {
+	if lease.holder == nil {
+		return false
+	}
+	lease.holder.mu.Lock()
+	defer lease.holder.mu.Unlock()
+	if lease.holder.generation != lease.generation || lease.holder.stream == nil || lease.holder.canonical == nil || (receiver != nil && lease.holder.canonical != receiver) {
+		return false
+	}
+	lease.holder.stream = nil
+	lease.holder.lastActive = time.Time{}
+	lease.holder.canonical.LastActive = time.Time{}
+	return true
 }
 
 // SetTaskStream publishes the agent's RequestTask stream so other goroutines
@@ -136,6 +293,172 @@ func (s *Server) SendTask(task *pb.Task) error {
 	return h.s.Send(task)
 }
 
+// AttachStateStream returns the ownership generation used to serialize state
+// writes with reconnect and disconnect cleanup.
+func (s *Server) AttachStateStream(stream pb.NezhaService_ReportSystemStateServer) StateStreamLease {
+	if stream == nil {
+		return StateStreamLease{}
+	}
+	runtimeHolderInitMu.Lock()
+	defer runtimeHolderInitMu.Unlock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		candidate := &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), host: cloneHost(s.Host), lastActive: s.LastActive, prevIn: s.PrevTransferInSnapshot, prevOut: s.PrevTransferOutSnapshot}
+		if s.runtime.CompareAndSwap(nil, candidate) {
+			holder = candidate
+		} else {
+			holder = s.runtime.Load()
+		}
+	}
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	holder.generation++
+	holder.stream = stream
+	return StateStreamLease{holder: holder, generation: holder.generation}
+}
+
+func (s *Server) UpdateStateIfCurrent(lease StateStreamLease, state *HostState, lastActive time.Time) bool {
+	return s.UpdateStateIfCurrentWithSideEffect(lease, state, lastActive, nil)
+}
+
+func (s *Server) UpdateStateIfCurrentWithSideEffect(lease StateStreamLease, state *HostState, lastActive time.Time, sideEffect func() error) bool {
+	return lease.updateState(s, state, lastActive, sideEffect)
+}
+
+func (s *Server) ClearStateStreamIfCurrent(lease StateStreamLease) bool {
+	return lease.clear(s)
+}
+
+// RuntimeSnapshot is a deep copy of the mutable runtime state.
+type RuntimeSnapshot struct {
+	State                   *HostState
+	Host                    *Host
+	LastActive              time.Time
+	PrevTransferInSnapshot  uint64
+	PrevTransferOutSnapshot uint64
+}
+
+func (s *Server) RuntimeSnapshot() RuntimeSnapshot {
+	runtimeHolderInitMu.Lock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		candidate := &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), lastActive: s.LastActive, prevIn: s.PrevTransferInSnapshot, prevOut: s.PrevTransferOutSnapshot}
+		if s.runtime.CompareAndSwap(nil, candidate) {
+			holder = candidate
+		} else {
+			holder = s.runtime.Load()
+		}
+	}
+	runtimeHolderInitMu.Unlock()
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	if holder.canonical == s {
+		if holder.state == nil {
+			holder.state = cloneHostState(s.State)
+		}
+		if holder.host == nil {
+			holder.host = cloneHost(s.Host)
+		}
+	}
+	return RuntimeSnapshot{State: cloneHostState(holder.state), Host: cloneHost(holder.host), LastActive: holder.lastActive, PrevTransferInSnapshot: holder.prevIn, PrevTransferOutSnapshot: holder.prevOut}
+}
+
+func (s *Server) SetTransferSnapshots(inbound, outbound uint64) bool {
+	runtimeHolderInitMu.Lock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		holder = &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), lastActive: s.LastActive}
+		s.runtime.Store(holder)
+	}
+	runtimeHolderInitMu.Unlock()
+	holder.mu.Lock()
+	if holder.canonical != s {
+		holder.mu.Unlock()
+		return false
+	}
+	holder.prevIn = inbound
+	holder.prevOut = outbound
+	if holder.canonical != nil {
+		holder.canonical.PrevTransferInSnapshot = inbound
+		holder.canonical.PrevTransferOutSnapshot = outbound
+	}
+	holder.mu.Unlock()
+	return true
+}
+
+func (s *Server) TransferSnapshotDelta() (inbound, outbound, snapshotIn, snapshotOut uint64) {
+	snapshot := s.RuntimeSnapshot()
+	if snapshot.State == nil {
+		return 0, 0, snapshot.PrevTransferInSnapshot, snapshot.PrevTransferOutSnapshot
+	}
+	return snapshot.State.NetInTransfer, snapshot.State.NetOutTransfer, snapshot.PrevTransferInSnapshot, snapshot.PrevTransferOutSnapshot
+}
+
+func (s *Server) TransferDeltaAndAdvance() (inbound, outbound uint64, deltaIn, deltaOut uint64) {
+	runtimeHolderInitMu.Lock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		holder = &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), host: cloneHost(s.Host), lastActive: s.LastActive, prevIn: s.PrevTransferInSnapshot, prevOut: s.PrevTransferOutSnapshot}
+		s.runtime.Store(holder)
+	}
+	runtimeHolderInitMu.Unlock()
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	if holder.canonical != s || holder.state == nil {
+		return 0, 0, 0, 0
+	}
+	inbound, outbound = holder.state.NetInTransfer, holder.state.NetOutTransfer
+	deltaIn = inbound - min(inbound, holder.prevIn)
+	deltaOut = outbound - min(outbound, holder.prevOut)
+	holder.prevIn, holder.prevOut = inbound, outbound
+	if holder.canonical != nil {
+		holder.canonical.PrevTransferInSnapshot = inbound
+		holder.canonical.PrevTransferOutSnapshot = outbound
+	}
+	return
+}
+
+func cloneHostState(state *HostState) *HostState {
+	if state == nil {
+		return nil
+	}
+	clone := *state
+	clone.GPU = slices.Clone(state.GPU)
+	clone.Temperatures = slices.Clone(state.Temperatures)
+	return &clone
+}
+
+func cloneHost(host *Host) *Host {
+	if host == nil {
+		return nil
+	}
+	clone := *host
+	clone.CPU = slices.Clone(host.CPU)
+	clone.GPU = slices.Clone(host.GPU)
+	return &clone
+}
+
+func (s *Server) SetHost(host *Host) bool {
+	runtimeHolderInitMu.Lock()
+	holder := s.runtime.Load()
+	if holder == nil {
+		holder = &serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), lastActive: s.LastActive}
+		s.runtime.Store(holder)
+	}
+	runtimeHolderInitMu.Unlock()
+	holder.mu.Lock()
+	if holder.canonical != s {
+		holder.mu.Unlock()
+		return false
+	}
+	holder.host = cloneHost(host)
+	if holder.canonical != nil {
+		holder.canonical.Host = cloneHost(host)
+	}
+	holder.mu.Unlock()
+	return true
+}
+
 // ErrTaskStreamOffline is returned by SendTask when the agent has no
 // published RequestTask stream. Defined here (rather than in service/rpc)
 // so model-layer callers can branch on it without an import cycle.
@@ -146,22 +469,35 @@ func InitServer(s *Server) {
 	s.State = &HostState{}
 	s.GeoIP = &GeoIP{}
 	s.ConfigCache = make(chan any, 1)
+	s.runtime.Store(&serverRuntimeHolder{canonical: s, state: cloneHostState(s.State), host: cloneHost(s.Host)})
 }
 
 func (s *Server) CopyFromRunningServer(old *Server) {
-	s.Host = old.Host
-	s.State = old.State
+	runtimeHolderInitMu.Lock()
+	defer runtimeHolderInitMu.Unlock()
 	s.GeoIP = old.GeoIP
-	s.LastActive = old.LastActive
 	// Adopt the holder pointer verbatim so the new *Server shares the send
 	// mutex AND the stream identity with the old *Server; constructing a fresh
 	// holder via SetTaskStream(GetTaskStream()) would give the new object its
 	// own mutex, letting two *Server pointers race SendMsg on the same stream
 	// during the edit/transfer rotation window.
 	s.adoptTaskStreamHolder(old.taskStream.Load())
+	holder := old.runtime.Load()
+	if holder == nil {
+		holder = &serverRuntimeHolder{canonical: old, state: cloneHostState(old.State), host: cloneHost(old.Host), lastActive: old.LastActive, prevIn: old.PrevTransferInSnapshot, prevOut: old.PrevTransferOutSnapshot}
+		old.runtime.CompareAndSwap(nil, holder)
+		holder = old.runtime.Load()
+	}
+	holder.mu.Lock()
+	holder.canonical = s
+	s.runtime.Store(holder)
+	s.State = cloneHostState(holder.state)
+	s.Host = cloneHost(holder.host)
+	s.LastActive = holder.lastActive
+	s.PrevTransferInSnapshot = holder.prevIn
+	s.PrevTransferOutSnapshot = holder.prevOut
+	holder.mu.Unlock()
 	s.ConfigCache = old.ConfigCache
-	s.PrevTransferInSnapshot = old.PrevTransferInSnapshot
-	s.PrevTransferOutSnapshot = old.PrevTransferOutSnapshot
 }
 
 func (s *Server) AfterFind(tx *gorm.DB) error {
@@ -245,6 +581,8 @@ type serverWithOwner struct {
 // global-secret pseudo-owner and is best surfaced as such by the caller's
 // translation table on the frontend.
 func (s *Server) MarshalJSON() ([]byte, error) {
+	runtime := s.RuntimeSnapshot()
+	copy := s.RuntimeCopy(runtime)
 	owner := &ServerOwnerInfo{ID: s.GetUserID()}
 	if ServerOwnerLookup != nil {
 		if info, ok := ServerOwnerLookup(owner.ID); ok {
@@ -252,9 +590,38 @@ func (s *Server) MarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.Marshal(serverWithOwner{
-		serverJSON: (*serverJSON)(s),
+		serverJSON: (*serverJSON)(copy),
 		Owner:      owner,
 	})
+}
+
+func (s *Server) RuntimeCopy(runtime RuntimeSnapshot) *Server {
+	return &Server{
+		Common: Common{
+			ID:        s.ID,
+			CreatedAt: s.CreatedAt,
+			UpdatedAt: s.UpdatedAt,
+			UserID:    s.GetUserID(),
+		},
+		Name:                    s.Name,
+		UUID:                    s.UUID,
+		Note:                    s.Note,
+		PublicNote:              s.PublicNote,
+		DisplayIndex:            s.DisplayIndex,
+		HideForGuest:            s.HideForGuest,
+		EnableDDNS:              s.EnableDDNS,
+		DDNSProfilesRaw:         s.DDNSProfilesRaw,
+		OverrideDDNSDomainsRaw:  s.OverrideDDNSDomainsRaw,
+		DDNSProfiles:            slices.Clone(s.DDNSProfiles),
+		OverrideDDNSDomains:     s.OverrideDDNSDomains,
+		Host:                    runtime.Host,
+		State:                   runtime.State,
+		GeoIP:                   s.GeoIP,
+		LastActive:              runtime.LastActive,
+		ConfigCache:             s.ConfigCache,
+		PrevTransferInSnapshot:  runtime.PrevTransferInSnapshot,
+		PrevTransferOutSnapshot: runtime.PrevTransferOutSnapshot,
+	}
 }
 
 func (s *Server) HasPermission(ctx *gin.Context) bool {

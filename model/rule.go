@@ -62,73 +62,87 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	}
 
 	var src float64
+	runtime := server.RuntimeSnapshot()
+	if runtime.State == nil {
+		return false
+	}
+	state := runtime.State
 
 	switch u.Type {
 	case "cpu":
-		src = float64(server.State.CPU)
+		src = float64(state.CPU)
 	case "gpu_max":
-		src = slices.Max(server.State.GPU)
+		src = slices.Max(state.GPU)
 	case "memory":
-		src = percentage(server.State.MemUsed, server.Host.MemTotal)
+		if runtime.Host == nil {
+			return false
+		}
+		src = percentage(state.MemUsed, runtime.Host.MemTotal)
 	case "swap":
-		src = percentage(server.State.SwapUsed, server.Host.SwapTotal)
+		if runtime.Host == nil {
+			return false
+		}
+		src = percentage(state.SwapUsed, runtime.Host.SwapTotal)
 	case "disk":
-		src = percentage(server.State.DiskUsed, server.Host.DiskTotal)
+		if runtime.Host == nil {
+			return false
+		}
+		src = percentage(state.DiskUsed, runtime.Host.DiskTotal)
 	case "net_in_speed":
-		src = float64(server.State.NetInSpeed)
+		src = float64(state.NetInSpeed)
 	case "net_out_speed":
-		src = float64(server.State.NetOutSpeed)
+		src = float64(state.NetOutSpeed)
 	case "net_all_speed":
-		src = float64(server.State.NetOutSpeed + server.State.NetOutSpeed)
+		src = float64(state.NetOutSpeed + state.NetOutSpeed)
 	case "transfer_in":
-		src = float64(server.State.NetInTransfer)
+		src = float64(state.NetInTransfer)
 	case "transfer_out":
-		src = float64(server.State.NetOutTransfer)
+		src = float64(state.NetOutTransfer)
 	case "transfer_all":
-		src = float64(server.State.NetOutTransfer + server.State.NetInTransfer)
+		src = float64(state.NetOutTransfer + state.NetInTransfer)
 	case "offline":
-		if server.LastActive.IsZero() {
+		if runtime.LastActive.IsZero() {
 			src = 0
 		} else {
-			src = float64(server.LastActive.Unix())
+			src = float64(runtime.LastActive.Unix())
 		}
 	case "transfer_in_cycle":
-		src = float64(utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
+		src = float64(utils.SubUintChecked(state.NetInTransfer, runtime.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
 			db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "transfer_out_cycle":
-		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot))
+		src = float64(utils.SubUintChecked(state.NetOutTransfer, runtime.PrevTransferOutSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
 			db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "transfer_all_cycle":
-		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot) + utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
+		src = float64(utils.SubUintChecked(state.NetOutTransfer, runtime.PrevTransferOutSnapshot) + utils.SubUintChecked(state.NetInTransfer, runtime.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
 			db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "load1":
-		src = server.State.Load1
+		src = state.Load1
 	case "load5":
-		src = server.State.Load5
+		src = state.Load5
 	case "load15":
-		src = server.State.Load15
+		src = state.Load15
 	case "tcp_conn_count":
-		src = float64(server.State.TcpConnCount)
+		src = float64(state.TcpConnCount)
 	case "udp_conn_count":
-		src = float64(server.State.UdpConnCount)
+		src = float64(state.UdpConnCount)
 	case "process_count":
-		src = float64(server.State.ProcessCount)
+		src = float64(state.ProcessCount)
 	case "temperature_max":
 		var temp []float64
-		if server.State.Temperatures != nil {
-			for _, tempStat := range server.State.Temperatures {
+		if state.Temperatures != nil {
+			for _, tempStat := range state.Temperatures {
 				if tempStat.Temperature != 0 {
 					temp = append(temp, tempStat.Temperature)
 				}

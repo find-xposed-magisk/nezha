@@ -179,37 +179,43 @@ func (ns *NotificationServerBundle) replaceParamsInString(str string, message st
 	}
 
 	if ns.Server != nil {
+		runtime := ns.Server.RuntimeSnapshot()
+		if runtime.State == nil || runtime.Host == nil {
+			return str
+		}
+		state := runtime.State
+		host := runtime.Host
 		replacements = append(replacements,
 			"#SERVER.NAME#", mod(ns.Server.Name),
 			"#SERVER.ID#", mod(fmt.Sprintf("%d", ns.Server.ID)),
 
 			// Converted metrics
-			"#SERVER.CPU#", mod(ns.formatUsage(false, ns.Server.State.CPU)),
-			"#SERVER.MEM#", mod(ns.formatUsage(true, float64(ns.Server.State.MemUsed)/float64(ns.Server.Host.MemTotal))),
-			"#SERVER.SWAP#", mod(ns.formatUsage(true, float64(ns.Server.State.SwapUsed)/float64(ns.Server.Host.SwapTotal))),
-			"#SERVER.DISK#", mod(ns.formatUsage(true, float64(ns.Server.State.DiskUsed)/float64(ns.Server.Host.DiskTotal))),
-			"#SERVER.SPEEDIN#", mod(fmt.Sprintf("%s/s", ns.formatSize(ns.Server.State.NetInSpeed))),
-			"#SERVER.SPEEDOUT#", mod(fmt.Sprintf("%s/s", ns.formatSize(ns.Server.State.NetOutSpeed))),
-			"#SERVER.TRANSFERIN#", mod(ns.formatSize(ns.Server.State.NetInTransfer)),
-			"#SERVER.TRANSFEROUT#", mod(ns.formatSize(ns.Server.State.NetOutTransfer)),
+			"#SERVER.CPU#", mod(ns.formatUsage(false, state.CPU)),
+			"#SERVER.MEM#", mod(ns.formatUsage(true, float64(state.MemUsed)/float64(host.MemTotal))),
+			"#SERVER.SWAP#", mod(ns.formatUsage(true, float64(state.SwapUsed)/float64(host.SwapTotal))),
+			"#SERVER.DISK#", mod(ns.formatUsage(true, float64(state.DiskUsed)/float64(host.DiskTotal))),
+			"#SERVER.SPEEDIN#", mod(fmt.Sprintf("%s/s", ns.formatSize(state.NetInSpeed))),
+			"#SERVER.SPEEDOUT#", mod(fmt.Sprintf("%s/s", ns.formatSize(state.NetOutSpeed))),
+			"#SERVER.TRANSFERIN#", mod(ns.formatSize(state.NetInTransfer)),
+			"#SERVER.TRANSFEROUT#", mod(ns.formatSize(state.NetOutTransfer)),
 
 			// Raw metrics
-			"#SERVER.CPUUSED#", mod(fmt.Sprintf("%f", ns.Server.State.CPU)),
-			"#SERVER.MEMUSED#", mod(fmt.Sprintf("%d", ns.Server.State.MemUsed)),
-			"#SERVER.SWAPUSED#", mod(fmt.Sprintf("%d", ns.Server.State.SwapUsed)),
-			"#SERVER.DISKUSED#", mod(fmt.Sprintf("%d", ns.Server.State.DiskUsed)),
-			"#SERVER.MEMTOTAL#", mod(fmt.Sprintf("%d", ns.Server.Host.MemTotal)),
-			"#SERVER.SWAPTOTAL#", mod(fmt.Sprintf("%d", ns.Server.Host.SwapTotal)),
-			"#SERVER.DISKTOTAL#", mod(fmt.Sprintf("%d", ns.Server.Host.DiskTotal)),
-			"#SERVER.NETINSPEED#", mod(fmt.Sprintf("%d", ns.Server.State.NetInSpeed)),
-			"#SERVER.NETOUTSPEED#", mod(fmt.Sprintf("%d", ns.Server.State.NetOutSpeed)),
-			"#SERVER.NETINTRANSFER#", mod(fmt.Sprintf("%d", ns.Server.State.NetInTransfer)),
-			"#SERVER.NETOUTTRANSFER#", mod(fmt.Sprintf("%d", ns.Server.State.NetOutTransfer)),
-			"#SERVER.LOAD1#", mod(fmt.Sprintf("%f", ns.Server.State.Load1)),
-			"#SERVER.LOAD5#", mod(fmt.Sprintf("%f", ns.Server.State.Load5)),
-			"#SERVER.LOAD15#", mod(fmt.Sprintf("%f", ns.Server.State.Load15)),
-			"#SERVER.TCPCONNCOUNT#", mod(fmt.Sprintf("%d", ns.Server.State.TcpConnCount)),
-			"#SERVER.UDPCONNCOUNT#", mod(fmt.Sprintf("%d", ns.Server.State.UdpConnCount)),
+			"#SERVER.CPUUSED#", mod(fmt.Sprintf("%f", state.CPU)),
+			"#SERVER.MEMUSED#", mod(fmt.Sprintf("%d", state.MemUsed)),
+			"#SERVER.SWAPUSED#", mod(fmt.Sprintf("%d", state.SwapUsed)),
+			"#SERVER.DISKUSED#", mod(fmt.Sprintf("%d", state.DiskUsed)),
+			"#SERVER.MEMTOTAL#", mod(fmt.Sprintf("%d", host.MemTotal)),
+			"#SERVER.SWAPTOTAL#", mod(fmt.Sprintf("%d", host.SwapTotal)),
+			"#SERVER.DISKTOTAL#", mod(fmt.Sprintf("%d", host.DiskTotal)),
+			"#SERVER.NETINSPEED#", mod(fmt.Sprintf("%d", state.NetInSpeed)),
+			"#SERVER.NETOUTSPEED#", mod(fmt.Sprintf("%d", state.NetOutSpeed)),
+			"#SERVER.NETINTRANSFER#", mod(fmt.Sprintf("%d", state.NetInTransfer)),
+			"#SERVER.NETOUTTRANSFER#", mod(fmt.Sprintf("%d", state.NetOutTransfer)),
+			"#SERVER.LOAD1#", mod(fmt.Sprintf("%f", state.Load1)),
+			"#SERVER.LOAD5#", mod(fmt.Sprintf("%f", state.Load5)),
+			"#SERVER.LOAD15#", mod(fmt.Sprintf("%f", state.Load15)),
+			"#SERVER.TCPCONNCOUNT#", mod(fmt.Sprintf("%d", state.TcpConnCount)),
+			"#SERVER.UDPCONNCOUNT#", mod(fmt.Sprintf("%d", state.UdpConnCount)),
 		)
 
 		var ipv4, ipv6, validIP string
