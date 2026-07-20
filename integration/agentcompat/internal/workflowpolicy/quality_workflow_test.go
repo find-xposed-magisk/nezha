@@ -192,21 +192,3 @@ func readNezhaQualityWorkflow(t *testing.T) []byte {
 	require.NoError(t, err)
 	return data
 }
-
-func repositoryRoot(t *testing.T) string {
-	t.Helper()
-	current, err := os.Getwd()
-	require.NoError(t, err)
-	for {
-		goModule, readError := os.ReadFile(filepath.Join(current, "go.mod"))
-		if readError == nil && strings.HasPrefix(string(goModule), "module github.com/nezhahq/nezha\n") {
-			return current
-		}
-		if readError != nil && !os.IsNotExist(readError) {
-			require.NoError(t, readError)
-		}
-		parent := filepath.Dir(current)
-		require.NotEqual(t, current, parent, "repository root containing go.mod was not found")
-		current = parent
-	}
-}
