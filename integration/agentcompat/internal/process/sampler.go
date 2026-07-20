@@ -13,13 +13,15 @@ import (
 )
 
 type Sample struct {
-	PID               int    `json:"pid"`
-	RSSBytes          uint64 `json:"rss_bytes"`
-	DescendantPIDs    []int  `json:"descendant_pids"`
-	DescendantCount   int    `json:"descendant_count"`
-	NonStdioFDCount   int    `json:"non_stdio_fd_count"`
-	TCPListenerCount  int    `json:"tcp_listener_count"`
-	TCP6ListenerCount int    `json:"tcp6_listener_count"`
+	PID               int             `json:"pid"`
+	RSSBytes          uint64          `json:"rss_bytes"`
+	DescendantPIDs    []int           `json:"descendant_pids"`
+	DescendantCount   int             `json:"descendant_count"`
+	NonStdioFDCount   int             `json:"non_stdio_fd_count"`
+	TCPListenerCount  int             `json:"tcp_listener_count"`
+	TCP6ListenerCount int             `json:"tcp6_listener_count"`
+	FDObservations    []FDObservation `json:"-"`
+	SampledAt         time.Time       `json:"-"`
 }
 
 type Window struct {
@@ -28,13 +30,22 @@ type Window struct {
 }
 
 type WindowSpec struct {
-	PID             int
-	Interval        time.Duration
-	AllowTerminated bool
-	ObserveSample   func(context.Context, Sample) error
+	PID                   int
+	Interval              time.Duration
+	AllowTerminated       bool
+	CaptureFDObservations bool
+	ObserveSample         func(context.Context, Sample) error
 }
 
 func SampleProcess(pid int) (Sample, error) {
+	return sampleProcess(pid, false)
+}
+
+func SampleProcessWithFDObservations(pid int) (Sample, error) {
+	return sampleProcess(pid, true)
+}
+
+func sampleProcess(pid int, captureFDObservations bool) (Sample, error) {
 	rssBytes, err := readRSSBytes(pid)
 	if err != nil {
 		return Sample{}, err
@@ -43,7 +54,7 @@ func SampleProcess(pid int) (Sample, error) {
 	if err != nil {
 		return Sample{}, err
 	}
-	fdCount, socketInodes, err := processFDs(pid)
+	fdCount, socketInodes, fdObservations, err := processFDs(pid, captureFDObservations)
 	if err != nil {
 		return Sample{}, err
 	}
@@ -63,6 +74,8 @@ func SampleProcess(pid int) (Sample, error) {
 		NonStdioFDCount:   fdCount,
 		TCPListenerCount:  intersectionCount(socketInodes, tcpListeners),
 		TCP6ListenerCount: intersectionCount(socketInodes, tcp6Listeners),
+		FDObservations:    fdObservations,
+		SampledAt:         time.Now(),
 	}, nil
 }
 
@@ -81,7 +94,7 @@ func SampleWindow(ctx context.Context, spec WindowSpec) (Window, error) {
 				return Window{}, ctx.Err()
 			}
 		}
-		sample, err := SampleProcess(spec.PID)
+		sample, err := sampleProcess(spec.PID, spec.CaptureFDObservations)
 		if err != nil {
 			if spec.AllowTerminated && os.IsNotExist(err) {
 				return window, nil

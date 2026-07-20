@@ -103,14 +103,23 @@ func readParentPID(pid int) (int, error) {
 	return parentPID, nil
 }
 
-func processFDs(pid int) (int, map[uint64]struct{}, error) {
+type FDObservation struct {
+	Number int
+	Target string
+}
+
+func processFDs(pid int, captureObservations bool) (int, map[uint64]struct{}, []FDObservation, error) {
 	directory := filepath.Join("/proc", strconv.Itoa(pid), "fd")
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	count := 0
 	sockets := make(map[uint64]struct{})
+	var observations []FDObservation
+	if captureObservations {
+		observations = make([]FDObservation, 0, len(entries))
+	}
 	for _, entry := range entries {
 		descriptor, err := strconv.Atoi(entry.Name())
 		if err != nil || descriptor < 3 {
@@ -121,14 +130,22 @@ func processFDs(pid int) (int, map[uint64]struct{}, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		count++
+		if captureObservations {
+			observations = append(observations, FDObservation{Number: descriptor, Target: target})
+		}
 		if inode, exists := parseSocketInode(target); exists {
 			sockets[inode] = struct{}{}
 		}
 	}
-	return count, sockets, nil
+	if captureObservations {
+		sort.Slice(observations, func(left, right int) bool {
+			return observations[left].Number < observations[right].Number || (observations[left].Number == observations[right].Number && observations[left].Target < observations[right].Target)
+		})
+	}
+	return count, sockets, observations, nil
 }
 
 func parseSocketInode(target string) (uint64, bool) {
