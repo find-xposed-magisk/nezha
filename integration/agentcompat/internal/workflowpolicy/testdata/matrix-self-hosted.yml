@@ -1,0 +1,14 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, self-hosted]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...

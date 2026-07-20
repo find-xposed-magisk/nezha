@@ -1,0 +1,11 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...

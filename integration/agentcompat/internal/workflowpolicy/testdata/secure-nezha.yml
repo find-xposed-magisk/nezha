@@ -1,0 +1,40 @@
+name: Secure Nezha compatibility
+# Comments and names are not policy input: ignore pull_request_target and ${{ secrets.FAKE }}.
+on:
+  pull_request:
+  merge_group:
+concurrency:
+  group: secure-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  id-token: none
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Nezha
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Checkout Agent
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          repository: nezhahq/agent
+          ref: 0123456789abcdef0123456789abcdef01234567
+          path: agent
+          persist-credentials: false
+      - name: Test
+        run: go test ./integration/agentcompat/...
+      - name: Document self-hosted, Docker, cache, and service bans
+        run: printf '%s\n' 'policy active'
+      - name: Redact evidence
+        id: redact-evidence
+        if: always()
+        run: go run ./integration/agentcompat/cmd/redact --output "$RUNNER_TEMP/nezha-agentcompat-redacted"
+      - name: Upload redacted evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          path: ${{ runner.temp }}/nezha-agentcompat-redacted

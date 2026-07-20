@@ -1,0 +1,17 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  first:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...
+jobs:
+  second:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...

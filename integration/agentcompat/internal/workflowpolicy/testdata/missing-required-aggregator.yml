@@ -1,0 +1,17 @@
+name: Missing required aggregator
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: go test ./...
+  linux-race-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: go test -race -shuffle=on -count=1 ./...

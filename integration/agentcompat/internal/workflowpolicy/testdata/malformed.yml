@@ -1,0 +1,4 @@
+on: [pull_request
+jobs:
+  verify:
+    runs-on: ubuntu-24.04

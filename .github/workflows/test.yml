@@ -2,51 +2,137 @@ name: Run Tests
 
 on:
   push:
-    paths:
-      - "**.go"
-      - "go.mod"
-      - "go.sum"
-      - "resource/**"
-      - ".github/workflows/test.yml"
+    branches:
+      - master
   pull_request:
     branches:
       - master
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nezha-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tests:
+    name: Ordinary tests and build (${{ matrix.os }})
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        os: [ubuntu, windows, macos]
-
-    runs-on: ${{ matrix.os }}-latest
-    env:
-      GO111MODULE: on
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: "1.26.x"
+          cache: false
 
-      - name: generate swagger docs
+      - name: Generate Swagger docs
         run: |
-          go install github.com/swaggo/swag/cmd/swag@latest
+          go install github.com/swaggo/swag/cmd/swag@v1.16.6
           touch ./cmd/dashboard/user-dist/a
           touch ./cmd/dashboard/admin-dist/a
           swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
 
       - name: Unit test
-        run: |
-          go test -v ./...
+        run: go test -mod=readonly -count=1 ./...
 
-      - name: Build test
+      - name: Build dashboard
         run: go build -v ./cmd/dashboard
 
+  linux-race-quality:
+    name: Linux race and quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.26.x"
+          cache: false
+
+      - name: Generate Swagger docs
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@v1.16.6
+          touch ./cmd/dashboard/user-dist/a
+          touch ./cmd/dashboard/admin-dist/a
+          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
+
+      - name: Race and shuffle tests
+        run: go test -mod=readonly -race -shuffle=on -count=1 ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(git ls-files -co --exclude-standard '*.go' -z | xargs -0 gofmt -l)"
+
+      - name: Build dashboard
+        run: go build ./cmd/dashboard
+
       - name: Run Gosec Security Scanner
-        if: runner.os == 'Linux'
-        uses: securego/gosec@master
+        shell: bash
         env:
           GOTOOLCHAIN: auto
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+          gosec --exclude=G104,G115,G117,G203,G402,G703,G704 ./...
+
+  agentcompat-stress:
+    name: Linux agent compatibility stress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout Nezha revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          args: --exclude=G104,G115,G117,G203,G402,G703,G704 ./...
+          path: nezha
+          persist-credentials: false
+      - name: Checkout pinned Agent revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          repository: nezhahq/agent
+          ref: 667e1dd5e166ffef808ec26dc20de85bc33a0a0f
+          path: agent
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.26.x"
+          cache: false
+      - name: Require named stress test
+        working-directory: nezha
+        run: go test -mod=readonly -tags=agentcompat -list '^TestStressPRFullEightAgentExactlyOnce$' ./integration/agentcompat/internal/scenario | grep -Fx 'TestStressPRFullEightAgentExactlyOnce'
+      - name: Run PR-full agent compatibility stress
+        working-directory: nezha
+        env:
+          AGENTCOMPAT_NEZHA_SOURCE: ${{ github.workspace }}/nezha
+          AGENTCOMPAT_AGENT_SOURCE: ${{ github.workspace }}/agent
+        run: go test -mod=readonly -tags=agentcompat -run '^TestStressPRFullEightAgentExactlyOnce$' -count=1 -v ./integration/agentcompat/internal/scenario
+
+  nezha-quality-required:
+    name: nezha-quality-required
+    if: ${{ always() }}
+    needs:
+      - tests
+      - linux-race-quality
+      - agentcompat-stress
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all blocking jobs to pass
+        shell: bash
+        run: |
+          test "${{ needs.tests.result }}" = success
+          test "${{ needs.linux-race-quality.result }}" = success
+          test "${{ needs.agentcompat-stress.result }}" = success

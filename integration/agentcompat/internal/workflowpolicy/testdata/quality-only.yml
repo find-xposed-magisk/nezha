@@ -1,0 +1,12 @@
+name: Quality only
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  linux-race-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: go test -race -shuffle=on -count=1 ./...

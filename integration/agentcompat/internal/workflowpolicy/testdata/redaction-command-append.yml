@@ -1,0 +1,20 @@
+on:
+  pull_request:
+concurrency: policy
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Redact evidence
+        id: redact-evidence
+        if: always()
+        run: |
+          go run ./integration/agentcompat/cmd/redact --output "$RUNNER_TEMP/nezha-agentcompat-redacted"
+          cp raw-secret "$RUNNER_TEMP/nezha-agentcompat-redacted/raw-secret"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          path: ${{ runner.temp }}/nezha-agentcompat-redacted
