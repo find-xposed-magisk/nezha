@@ -38,7 +38,7 @@ func (agent *Agent) prepareConfig(config AgentStartConfig) error {
 		return err
 	}
 	agent.configPath = configPath
-	content := fmt.Sprintf("server: %q\nclient_secret: %q\nuuid: %q\ndisable_auto_update: true\ndisable_command_execute: false\ndisable_nat: false\nreport_delay: 1\nip_report_period: 30\ntls: %t\ninsecure_tls: false\ndebug: %t\n", config.Endpoint, config.Secret, config.UUID, config.TLS, config.Debug)
+	content := fmt.Sprintf("server: %q\nclient_secret: %q\nuuid: %q\ndisable_auto_update: true\ndisable_command_execute: false\ndisable_nat: false\nreport_delay: 1\nip_report_period: 30\nskip_connection_count: %t\ntls: %t\ninsecure_tls: false\ndebug: %t\n", config.Endpoint, config.Secret, config.UUID, config.SkipConnectionCount, config.TLS, config.Debug)
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write agent config: %w", err)
 	}
