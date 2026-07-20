@@ -22,6 +22,8 @@ func TestPreparedBinary_EightIndependentAgentsShareBinaryAndCleanUp(t *testing.T
 	preparedRoot := prepared.WorkspaceRoot()
 	binaryPath := prepared.BinaryPath()
 	require.FileExists(t, binaryPath)
+	requireDirectoryMode(t, preparedRoot, 0o711)
+	requireDirectoryMode(t, filepath.Dir(binaryPath), 0o711)
 	initialBinaryInfo, err := os.Stat(binaryPath)
 	require.NoError(t, err)
 	initialBinaryStat, ok := initialBinaryInfo.Sys().(*syscall.Stat_t)
@@ -108,6 +110,13 @@ func TestPreparedBinary_EightIndependentAgentsShareBinaryAndCleanUp(t *testing.T
 	require.NoError(t, prepared.Close())
 	_, statErr := os.Stat(preparedRoot)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func requireDirectoryMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, want, info.Mode().Perm())
 }
 
 func TestAgent_StartBuildsAndOwnsItsBinary(t *testing.T) {

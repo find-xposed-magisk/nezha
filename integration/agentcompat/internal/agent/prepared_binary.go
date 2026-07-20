@@ -55,7 +55,7 @@ func closePreparedWorkspace(workspaceRoot *workspace.Workspace, cause error) err
 
 func exposePreparedBinary(root, binaryPath string) error {
 	for _, path := range []string{root, filepath.Dir(binaryPath)} {
-		if err := os.Chmod(path, 0o755); err != nil {
+		if err := os.Chmod(path, 0o711); err != nil { // #nosec G302 -- Directories need search permission for the credentialed test agent without granting directory reads; payloads and logs remain private.
 			return fmt.Errorf("make prepared agent binary executable: %w", err)
 		}
 	}

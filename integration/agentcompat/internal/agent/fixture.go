@@ -4,9 +4,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/nezhahq/nezha/integration/agentcompat/internal/workspace"
 )
@@ -96,13 +97,35 @@ func (agent *Agent) grantWorkspaceOwnership(config AgentStartConfig) error {
 	if config.Credential == nil {
 		return nil
 	}
-	if err := filepath.WalkDir(agent.workspace.Root(), func(path string, _ os.DirEntry, walkErr error) error {
+	root, err := os.OpenRoot(agent.workspace.Root())
+	if err != nil {
+		return fmt.Errorf("open agent workspace ownership root: %w", err)
+	}
+	defer root.Close()
+	paths := make([]string, 0)
+	if err := fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		return os.Chown(path, int(config.Credential.Uid), int(config.Credential.Gid))
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("agent workspace symlink is not allowed: %s", path)
+		}
+		paths = append(paths, path)
+		return nil
 	}); err != nil {
 		return fmt.Errorf("grant agent workspace ownership: %w", err)
+	}
+	for _, path := range paths {
+		file, err := root.Open(path)
+		if err != nil {
+			return fmt.Errorf("grant agent workspace ownership: %w", err)
+		}
+		// Chown the opened descriptor so a concurrent pathname swap cannot retarget ownership.
+		chownErr := file.Chown(int(config.Credential.Uid), int(config.Credential.Gid))
+		closeErr := file.Close()
+		if err := errors.Join(chownErr, closeErr); err != nil {
+			return fmt.Errorf("grant agent workspace ownership: %w", err)
+		}
 	}
 	return nil
 }
