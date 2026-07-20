@@ -27,7 +27,7 @@ func writeMetadata(ctx context.Context, config cliConfig, now time.Time) error {
 	if err := os.MkdirAll(resultsDir, 0o700); err != nil {
 		return fmt.Errorf("create results directory: %w", err)
 	}
-	if err := os.Chmod(resultsDir, 0o700); err != nil {
+	if err := os.Chmod(resultsDir, 0o700); err != nil { // #nosec G302 -- 0700 is the required private directory mode; artifacts are written 0600.
 		return fmt.Errorf("secure results directory: %w", err)
 	}
 	if err := prepareResultsDir(resultsDir); err != nil {

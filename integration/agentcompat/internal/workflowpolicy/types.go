@@ -25,7 +25,7 @@ const (
 	RuleRepositoryNotAllowed   Rule = "repository-not-allowed"
 	RuleRepositoryNotLiteral   Rule = "repository-not-literal"
 	RuleOtherRepositoryRef     Rule = "other-repository-ref"
-	RulePersistCredentials     Rule = "persist-credentials"
+	RulePersistCredentials     Rule = "persist-credentials" // #nosec G101 -- GitHub Actions configuration key, not a credential.
 	RuleReusableExecutable     Rule = "reusable-executable"
 	RuleContinueOnError        Rule = "continue-on-error"
 	RuleSwallowedFailure       Rule = "swallowed-failure"
