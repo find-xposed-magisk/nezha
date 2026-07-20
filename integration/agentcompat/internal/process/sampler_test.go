@@ -4,11 +4,14 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"reflect"
+	"sort"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -55,6 +58,99 @@ func TestSampler_CountsNonStdioFDs(t *testing.T) {
 	requireNoError(t, err)
 	if sample.NonStdioFDCount != baseline.NonStdioFDCount+1 {
 		t.Fatalf("non-stdio FDs = %d, baseline = %d", sample.NonStdioFDCount, baseline.NonStdioFDCount)
+	}
+}
+
+func TestSampleProcess_DoesNotCaptureFDObservationsByDefault(t *testing.T) {
+	// Given / When
+	sample, err := SampleProcess(os.Getpid())
+
+	// Then
+	requireNoError(t, err)
+	if sample.FDObservations != nil {
+		t.Fatalf("SampleProcess FD observations = %v, want nil", sample.FDObservations)
+	}
+}
+
+func TestSampleWindow_DoesNotCaptureFDObservationsByDefault(t *testing.T) {
+	// Given / When
+	window, err := SampleWindow(t.Context(), WindowSpec{PID: os.Getpid(), Interval: time.Millisecond})
+
+	// Then
+	requireNoError(t, err)
+	for index, windowSample := range window.Samples {
+		if windowSample.FDObservations != nil {
+			t.Fatalf("sample %d FD observations = %v, want nil", index+1, windowSample.FDObservations)
+		}
+	}
+}
+
+func TestSampleWindow_CapturesFDObservationsAcrossKnownFileLifecycle(t *testing.T) {
+	// Given
+	file, err := os.Open("/proc/self/status")
+	requireNoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	descriptor := int(file.Fd())
+	target, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(descriptor))
+	requireNoError(t, err)
+	observed := 0
+
+	// When
+	window, err := SampleWindow(t.Context(), WindowSpec{
+		PID:                   os.Getpid(),
+		Interval:              time.Millisecond,
+		CaptureFDObservations: true,
+		ObserveSample: func(_ context.Context, sample Sample) error {
+			if observed == 0 {
+				if err := file.Close(); err != nil {
+					return err
+				}
+			}
+			observed++
+			return nil
+		},
+	})
+
+	// Then
+	requireNoError(t, err)
+	if len(window.Samples) != 5 || observed != 5 {
+		t.Fatalf("samples = %d, observed = %d, want 5", len(window.Samples), observed)
+	}
+	firstSampleContainsOpenedFile := false
+	for _, observation := range window.Samples[0].FDObservations {
+		if observation.Number == descriptor && observation.Target == target {
+			firstSampleContainsOpenedFile = true
+			break
+		}
+	}
+	if !firstSampleContainsOpenedFile {
+		t.Fatalf("sample 1 observations = %v, want FD %d target %q", window.Samples[0].FDObservations, descriptor, target)
+	}
+	for index, sample := range window.Samples {
+		if len(sample.FDObservations) != sample.NonStdioFDCount {
+			t.Fatalf("sample %d observations = %d, non-stdio FDs = %d", index+1, len(sample.FDObservations), sample.NonStdioFDCount)
+		}
+		if !sort.SliceIsSorted(sample.FDObservations, func(left, right int) bool {
+			leftObservation := sample.FDObservations[left]
+			rightObservation := sample.FDObservations[right]
+			return leftObservation.Number < rightObservation.Number || (leftObservation.Number == rightObservation.Number && leftObservation.Target < rightObservation.Target)
+		}) {
+			t.Fatalf("sample %d FD observations are not sorted: %v", index+1, sample.FDObservations)
+		}
+		if index > 0 {
+			for _, observation := range sample.FDObservations {
+				if observation.Number == descriptor {
+					t.Fatalf("sample %d observations unexpectedly retain closed FD %d: %v", index+1, descriptor, sample.FDObservations)
+				}
+			}
+		}
+	}
+	encoded, err := json.Marshal(window.Samples[0])
+	requireNoError(t, err)
+	var evidence map[string]json.RawMessage
+	requireNoError(t, json.Unmarshal(encoded, &evidence))
+	if _, exists := evidence["fd_observations"]; exists {
+		t.Fatalf("JSON evidence includes FD observations: %s", encoded)
 	}
 }
 
