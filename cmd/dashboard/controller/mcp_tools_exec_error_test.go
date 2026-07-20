@@ -78,6 +78,12 @@ func TestServerExec_AgentReportedErrorBecomesToolError(t *testing.T) {
 		"agent ExecResult.Error must propagate as MCP tool error; got %+v", tcr)
 	require.Contains(t, tcr.Content[0].Text, "agent disabled command execution",
 		"tool error text must surface the agent-reported error message")
+	var result model.ExecResult
+	structuredJSON, err := json.Marshal(tcr.StructuredContent)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(structuredJSON, &result))
+	require.Equal(t, -1, result.ExitCode)
+	require.Equal(t, "agent disabled command execution", result.Error)
 
 	require.Eventually(t, func() bool {
 		var got model.MCPAuditLog

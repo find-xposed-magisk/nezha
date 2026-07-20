@@ -17,11 +17,11 @@ import (
 // a fresh exec/fs task to the agent AFTER EnableMCP=false.
 //
 // This test drives the worst-case interleaving deterministically:
-//   1. CallAgent passes the upfront observer check (observer still false).
-//   2. The operator flips the observer to "disabled" and runs the cancel sweep
-//      while CallAgent is paused between the check and Store.
-//   3. CallAgent resumes; it MUST observe the kill switch on the post-Store
-//      re-check and return ErrMCPDisabled WITHOUT sending the task.
+//  1. CallAgent passes the upfront observer check (observer still false).
+//  2. The operator flips the observer to "disabled" and runs the cancel sweep
+//     while CallAgent is paused between the check and Store.
+//  3. CallAgent resumes; it MUST observe the kill switch on the post-Store
+//     re-check and return ErrMCPDisabled WITHOUT sending the task.
 //
 // With the race present, CallAgent sends the task and blocks until timeout
 // (ErrAgentTimeout) — the agent received a fresh task past the kill switch.
@@ -58,13 +58,14 @@ func TestCallAgent_KillSwitchBeatsRegistrationAfterSweep(t *testing.T) {
 	// Arrange the interleaving: hook fires once CallAgent is about to register,
 	// flipping the kill switch and running the cancel sweep so the not-yet-Stored
 	// entry is missed by the sweep.
-	testKillSwitchAfterUpfrontCheck = func() {
+	hook := func() {
 		mu.Lock()
 		killed = true
 		mu.Unlock()
 		CancelAllMCPInflight()
 	}
-	t.Cleanup(func() { testKillSwitchAfterUpfrontCheck = nil })
+	testKillSwitchAfterUpfrontCheck.Store(&hook)
+	t.Cleanup(func() { testKillSwitchAfterUpfrontCheck.Store(nil) })
 
 	_, err := CallAgent(context.Background(), target, model.TaskTypeExec,
 		model.ExecRequest{Cmd: "x"}, 1*time.Second)

@@ -109,7 +109,7 @@ func TestForceUpdateServerOnlineForeignIDIndistinguishableFromUnknown(t *testing
 	defer reset()
 
 	const bobID = uint64(200)
-	foreignResp := decodeForceUpdate(t, runForceUpdate(t, bobID, []uint64{1}))     // alice's online
+	foreignResp := decodeForceUpdate(t, runForceUpdate(t, bobID, []uint64{1}))    // alice's online
 	unknownResp := decodeForceUpdate(t, runForceUpdate(t, bobID, []uint64{9999})) // does not exist
 
 	assert.Equal(t, foreignResp.Success, unknownResp.Success,

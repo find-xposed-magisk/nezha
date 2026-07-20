@@ -39,20 +39,14 @@ func setupServiceDispatchPATFixture(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Service{}, &model.Server{}, &model.User{}, &model.ServiceHistory{}))
 
 	singleton.DB = db
 	singleton.Loc = time.UTC
 	singleton.Cache = cache.New(time.Minute, time.Minute)
 	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
-	// ServiceSentinel 在构造时会调 CronShared.AddFunc 注册每日/每周维护任务，
-	// 必须先于 NewServiceSentinel 装配。
-	singleton.CronShared = singleton.NewCronClass()
-
-	sentinel, err := singleton.NewServiceSentinel(make(chan *model.Service, 4))
-	require.NoError(t, err)
-	singleton.ServiceSentinelShared = sentinel
-
 	sc := singleton.NewEmptyServerClassForTest()
 	for _, id := range []uint64{1, 2} {
 		s := &model.Server{}
@@ -61,6 +55,13 @@ func setupServiceDispatchPATFixture(t *testing.T) {
 		sc.InsertForTest(s)
 	}
 	singleton.ServerShared = sc
+	// ServiceSentinel 在构造时会调 CronShared.AddFunc 注册每日/每周维护任务，
+	// 必须先于 NewServiceSentinel 装配。
+	singleton.CronShared = singleton.NewCronClass()
+
+	sentinel, err := singleton.NewServiceSentinel(make(chan *model.Service, 4))
+	require.NoError(t, err)
+	singleton.ServiceSentinelShared = sentinel
 
 	singleton.UserLock.Lock()
 	singleton.UserInfoMap = map[uint64]model.UserInfo{100: {Role: model.RoleMember}}
@@ -68,6 +69,8 @@ func setupServiceDispatchPATFixture(t *testing.T) {
 
 	t.Cleanup(func() {
 		sentinel.Close()
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.ServiceSentinelShared = originalSentinel
 		singleton.CronShared = originalCron
 		singleton.DB = originalDB

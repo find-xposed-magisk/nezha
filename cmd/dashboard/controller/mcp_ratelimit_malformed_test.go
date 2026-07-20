@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
@@ -15,7 +16,8 @@ func mcpEndpointRawCtx(t *testing.T, tok *model.APIToken, raw []byte) (*gin.Cont
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c, engine := gin.CreateTestContext(w)
+	require.NotNil(t, engine)
 	c.Request = httptest.NewRequest("POST", "/mcp", bytes.NewReader(raw))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(apiTokenCtxKey, tok)
@@ -47,8 +49,9 @@ func TestMCPMalformedToolsCallParamsCountsAgainstRateLimit(t *testing.T) {
 	raw := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":"not-an-object"}`)
 
 	for i := 0; i < 5; i++ {
-		c, _ := mcpEndpointRawCtx(t, tok, raw)
+		c, w := mcpEndpointRawCtx(t, tok, raw)
 		mcpEndpoint(c)
+		require.NotEmpty(t, w.Body.Bytes())
 	}
 
 	if mcpRateLimiterShared.Allow(tok.ID) {
@@ -64,8 +67,9 @@ func TestMCPMalformedEnvelopeCountsAgainstRateLimit(t *testing.T) {
 	raw := []byte(`{not valid json`)
 
 	for i := 0; i < 5; i++ {
-		c, _ := mcpEndpointRawCtx(t, tok, raw)
+		c, w := mcpEndpointRawCtx(t, tok, raw)
 		mcpEndpoint(c)
+		require.NotEmpty(t, w.Body.Bytes())
 	}
 
 	if mcpRateLimiterShared.Allow(tok.ID) {

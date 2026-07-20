@@ -32,6 +32,8 @@ func setupTenancyTest(t *testing.T) func() {
 	}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
 		&model.Cron{},
@@ -47,6 +49,7 @@ func setupTenancyTest(t *testing.T) func() {
 	singleton.DDNSShared = singleton.NewEmptyDDNSClassForTest()
 	singleton.NotificationShared = singleton.NewEmptyNotificationClassForTest()
 	return func() {
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Localizer = originalLocalizer
 		singleton.ServerShared = originalServer
@@ -118,16 +121,16 @@ func TestTenancy_CreateDDNS_InjectedUserIDIgnored(t *testing.T) {
 	defer setupTenancyTest(t)()
 
 	body := map[string]any{
-		"name":            "evil-ddns",
-		"provider":        "webhook",
-		"access_id":       "x",
-		"access_secret":   "y",
-		"webhook_url":     "http://127.0.0.1/",
-		"webhook_method":  "GET",
+		"name":                 "evil-ddns",
+		"provider":             "webhook",
+		"access_id":            "x",
+		"access_secret":        "y",
+		"webhook_url":          "http://127.0.0.1/",
+		"webhook_method":       "GET",
 		"webhook_request_type": "json",
 		"webhook_request_body": "",
-		"webhook_headers": "",
-		"user_id":         999, // attacker
+		"webhook_headers":      "",
+		"user_id":              999, // attacker
 	}
 	c := ctxAsMemberWithBody(10, body)
 	_, err := createDDNS(c)
@@ -155,12 +158,12 @@ func TestTenancy_UpdateDDNS_ForeignOwnerRejected(t *testing.T) {
 	require.NoError(t, singleton.DB.Create(&foreign).Error)
 
 	c := ctxAsMemberWithBody(10, map[string]any{
-		"name":          "hijacked",
-		"provider":      "webhook",
-		"access_id":     "x",
-		"access_secret": "y",
-		"webhook_url":   "http://attacker/",
-		"webhook_method": "GET",
+		"name":                 "hijacked",
+		"provider":             "webhook",
+		"access_id":            "x",
+		"access_secret":        "y",
+		"webhook_url":          "http://attacker/",
+		"webhook_method":       "GET",
 		"webhook_request_type": "json",
 	})
 	c.Params = gin.Params{{Key: "id", Value: itoa(foreign.ID)}}
@@ -237,7 +240,7 @@ func TestTenancy_UpdateNotificationGroup_ForeignOwnerRejected(t *testing.T) {
 	require.NoError(t, singleton.DB.Create(&foreign).Error)
 
 	c := ctxAsMemberWithBody(10, map[string]any{
-		"name":         "hijacked",
+		"name":          "hijacked",
 		"notifications": []uint64{},
 	})
 	c.Params = gin.Params{{Key: "id", Value: itoa(foreign.ID)}}

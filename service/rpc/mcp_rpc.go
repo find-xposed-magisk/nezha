@@ -49,8 +49,13 @@ var disarmedKillSwitch = func() bool { return false }
 // testKillSwitchAfterUpfrontCheck, when non-nil, runs inside CallAgent between
 // the upfront kill-switch check and the inflight registration. Production
 // leaves it nil; tests use it to drive the registration-after-sweep race
-// deterministically. Guarded by the same atomic.Pointer for race-freedom.
-var testKillSwitchAfterUpfrontCheck func()
+// deterministically.
+var testKillSwitchAfterUpfrontCheck atomic.Pointer[func()]
+
+var (
+	testMCPResultBeforeCancellationCheck atomic.Pointer[func()]
+	testMCPResultAfterCancellationCheck  atomic.Pointer[func()]
+)
 
 // SetMCPKillSwitchObserver installs the kill-switch probe the dashboard
 // owns. Idempotent; the dashboard wires it at startup. Passing nil
@@ -126,8 +131,8 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		cancelled: new(atomic.Bool),
 	}
 
-	if hook := testKillSwitchAfterUpfrontCheck; hook != nil {
-		hook()
+	if hook := testKillSwitchAfterUpfrontCheck.Load(); hook != nil {
+		(*hook)()
 	}
 
 	mcpInflight.Store(taskID, entry)
@@ -153,6 +158,7 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		}
 		return nil, err
 	}
+	notifyMCPTaskDispatched(serverID, taskID, taskType)
 
 	waitCtx := ctx
 	var cancel context.CancelFunc
@@ -163,6 +169,9 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 
 	select {
 	case res := <-resultCh:
+		if hook := testMCPResultBeforeCancellationCheck.Load(); hook != nil {
+			(*hook)()
+		}
 		// Cancel must beat a late agent reply: Go select picks a random
 		// ready case, so if CancelAllMCPInflight closed cancelCh after the
 		// agent already filled resultCh we could still surface success.
@@ -170,8 +179,12 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		// contract documented above ("CancelAllMCPInflight 期间被中断 →
 		// ErrMCPDisabled") and what TestUpdateConfig_DisablingMCPInvokesKillSwitch
 		// expects.
-		if entry.cancelled.Load() {
+		if !entry.claimResult() {
 			return nil, ErrMCPDisabled
+		}
+		notifyMCPTaskResultAccepted(entry.serverID, res.GetId(), res.GetType())
+		if hook := testMCPResultAfterCancellationCheck.Load(); hook != nil {
+			(*hook)()
 		}
 		if res == nil {
 			return nil, errors.New("agent returned nil result")
@@ -201,18 +214,37 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 // purely by attacker-controlled TaskResult.Id (same bug class as commit
 // 02129f1 in the cron path).
 //
-// cancelled flips to true the instant CancelAllMCPInflight observes the
-// entry. Every code path that could complete the call — the CallAgent
-// select on resultCh, deliverMCPResult, deliverMCPResultFromReporter —
-// MUST consult it before treating an agent reply as authoritative, otherwise
-// a TaskResult delivered concurrently with the kill switch can win Go's
-// random select tiebreak and surface success after EnableMCP=false.
+// cancelled flips to true when CancelAllMCPInflight wins the entry lock before
+// the result is claimed. Every code path that could complete the call — the
+// CallAgent select on resultCh, deliverMCPResult, deliverMCPResultFromReporter
+// — MUST consult it before treating an agent reply as authoritative.
 type mcpInflightEntry struct {
 	serverID  uint64
 	result    chan *pb.TaskResult
 	cancel    chan struct{}
 	cancelled *atomic.Bool
+	mu        sync.Mutex
+	claimed   bool
 	closeOnce sync.Once
+}
+
+func (e *mcpInflightEntry) claimResult() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cancelled.Load() {
+		return false
+	}
+	e.claimed = true
+	return true
+}
+
+func (e *mcpInflightEntry) cancelCall() {
+	e.mu.Lock()
+	if !e.claimed {
+		e.cancelled.Store(true)
+	}
+	e.mu.Unlock()
+	e.closeCancel()
 }
 
 // closeCancel closes the entry's cancel channel exactly once. Concurrent
@@ -243,10 +275,7 @@ func CancelAllMCPInflight() int {
 		if !ok {
 			return true
 		}
-		if entry.cancelled != nil {
-			entry.cancelled.Store(true)
-		}
-		entry.closeCancel()
+		entry.cancelCall()
 		mcpInflight.Delete(key)
 		cancelled++
 		return true
@@ -300,7 +329,9 @@ func deliverMCPResult(res *pb.TaskResult) {
 	if !ok {
 		return
 	}
-	if entry.cancelled != nil && entry.cancelled.Load() {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.cancelled.Load() {
 		return
 	}
 	select {
@@ -335,7 +366,9 @@ func deliverMCPResultFromReporter(res *pb.TaskResult, reporterID uint64) {
 			res.GetId(), entry.serverID, reporterID)
 		return
 	}
-	if entry.cancelled != nil && entry.cancelled.Load() {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.cancelled.Load() {
 		return
 	}
 	select {

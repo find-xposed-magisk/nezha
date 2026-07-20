@@ -307,6 +307,20 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 	}
 
 	finish := func(outcome, errCode, errMsg string, result any) {
+		if outcome == model.MCPOutcomeOK {
+			textPayload, err := marshalMCPToolResult(result)
+			if err != nil {
+				outcome = model.MCPOutcomeAgentError
+				errCode = model.MCPOutcomeAgentError
+				errMsg = "failed to encode tool result: " + err.Error()
+				result = nil
+			} else {
+				writeJSONRPCResult(c, req.ID, mcpToolCallResult{
+					Content:           []mcpContent{{Type: "text", Text: textPayload}},
+					StructuredContent: result,
+				})
+			}
+		}
 		audit.Outcome = outcome
 		audit.ErrorCode = errCode
 		audit.ErrorMsg = truncateString(errMsg, 512)
@@ -315,24 +329,15 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 		mcpAuditWrite(audit, p.Arguments)
 
 		if outcome == model.MCPOutcomeOK {
-			textPayload := "{}"
-			if result != nil {
-				if b, err := json.Marshal(result); err == nil {
-					textPayload = string(b)
-				}
-			}
-			writeJSONRPCResult(c, req.ID, mcpToolCallResult{
-				Content:           []mcpContent{{Type: "text", Text: textPayload}},
-				StructuredContent: result,
-			})
 			return
 		}
-		// 错误结果不带 structuredContent：严格客户端会拿它去校验工具声明的
-		// outputSchema（要求 exit_code/stdout/... 等成功字段），缺字段就整条
-		// 响应报 -32602，把真正的 isError 文本掩盖掉。错误信息走 content[].text。
+		// Semantic tool failures may retain a typed structured result (notably
+		// server.exec) so clients can distinguish a non-zero command outcome from
+		// transport, authorization, or deadline failures.
 		writeJSONRPCResult(c, req.ID, mcpToolCallResult{
-			Content: []mcpContent{{Type: "text", Text: errMsg}},
-			IsError: true,
+			Content:           []mcpContent{{Type: "text", Text: errMsg}},
+			StructuredContent: result,
+			IsError:           true,
 		})
 	}
 
@@ -356,6 +361,11 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 	result, err := tool.Handler(c, p.Arguments)
 	if err != nil {
 		code, msg := classifyToolError(err)
+		var structuredErr interface{ StructuredResult() any }
+		if errors.As(err, &structuredErr) {
+			finish(code, code, msg, structuredErr.StructuredResult())
+			return
+		}
 		finish(code, code, msg, nil)
 		return
 	}

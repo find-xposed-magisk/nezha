@@ -25,18 +25,18 @@ func (MCPAuditLog) TableName() string {
 }
 
 const (
-	MCPOutcomeOK             = "ok"
-	MCPOutcomeScopeDenied    = "scope_denied"
-	MCPOutcomePermDenied     = "permission_denied"
-	MCPOutcomeServerOffline  = "server_offline"
-	MCPOutcomeAgentTimeout   = "agent_timeout"
-	MCPOutcomeAgentError     = "agent_error"
+	MCPOutcomeOK            = "ok"
+	MCPOutcomeScopeDenied   = "scope_denied"
+	MCPOutcomePermDenied    = "permission_denied"
+	MCPOutcomeServerOffline = "server_offline"
+	MCPOutcomeAgentTimeout  = "agent_timeout"
+	MCPOutcomeAgentError    = "agent_error"
 	// MCPOutcomeMCPDisabled 区分 “管理员按下 kill switch 把 MCP 关了” 与
 	// “agent 真出故障” 两种语义：前者属 forbidden 类、不应该触发 agent
 	// 故障告警；详见 service/rpc/mcp_rpc.go 里 ErrMCPDisabled 的注释。
-	MCPOutcomeMCPDisabled    = "mcp_disabled"
-	MCPOutcomeInvalidArgs    = "invalid_args"
-	MCPOutcomeRateLimited    = "rate_limited"
+	MCPOutcomeMCPDisabled      = "mcp_disabled"
+	MCPOutcomeInvalidArgs      = "invalid_args"
+	MCPOutcomeRateLimited      = "rate_limited"
 	MCPOutcomeUnsupportedAgent = "unsupported_agent"
-	MCPOutcomeInternalError  = "internal_error"
+	MCPOutcomeInternalError    = "internal_error"
 )

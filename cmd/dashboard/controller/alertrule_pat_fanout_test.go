@@ -33,6 +33,8 @@ func setupAlertRuleFanoutFixture(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Server{}, &model.AlertRule{}, &model.Cron{}, &model.User{}))
 
 	singleton.DB = db
@@ -50,6 +52,8 @@ func setupAlertRuleFanoutFixture(t *testing.T) {
 	singleton.CronShared = singleton.NewCronClass()
 
 	t.Cleanup(func() {
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Cache = originalCache
 		singleton.Loc = originalLoc

@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +34,17 @@ func TestCallAgent_KillSwitchBeatsConcurrentLateResult(t *testing.T) {
 	cleanup := installFakeServer(t, target, stream)
 	defer cleanup()
 
+	resultSelected := make(chan struct{})
+	resumeResult := make(chan struct{})
+	var resultHook atomic.Pointer[func()]
+	hook := func() {
+		close(resultSelected)
+		<-resumeResult
+	}
+	resultHook.Store(&hook)
+	testMCPResultBeforeCancellationCheck.Store(resultHook.Load())
+	t.Cleanup(func() { testMCPResultBeforeCancellationCheck.Store(nil) })
+
 	delivered := make(chan struct{})
 	go func() {
 		sent := <-stream.sent
@@ -42,15 +54,64 @@ func TestCallAgent_KillSwitchBeatsConcurrentLateResult(t *testing.T) {
 			Successful: true,
 			Data:       `{"exit_code":0,"stdout":"should-not-surface"}`,
 		}, target)
-		CancelAllMCPInflight()
 		close(delivered)
 	}()
 
-	_, err := CallAgent(context.Background(), target, model.TaskTypeExec,
-		model.ExecRequest{Cmd: "x"}, 2*time.Second)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := CallAgent(context.Background(), target, model.TaskTypeExec,
+			model.ExecRequest{Cmd: "x"}, 2*time.Second)
+		errCh <- err
+	}()
+	<-resultSelected
+	CancelAllMCPInflight()
+	close(resumeResult)
 	<-delivered
+	err := <-errCh
 	if !errors.Is(err, ErrMCPDisabled) {
 		t.Fatalf("kill switch must win the race with a late agent reply; want ErrMCPDisabled, got %v", err)
+	}
+}
+
+func TestCallAgent_ResultBeforeKillSwitchReturnsSuccess(t *testing.T) {
+	const target uint64 = 7303
+
+	stream := newFakeStream()
+	cleanup := installFakeServer(t, target, stream)
+	defer cleanup()
+
+	resultClaimed := make(chan struct{})
+	resumeResult := make(chan struct{})
+	var resultHook atomic.Pointer[func()]
+	hook := func() {
+		close(resultClaimed)
+		<-resumeResult
+	}
+	resultHook.Store(&hook)
+	testMCPResultAfterCancellationCheck.Store(resultHook.Load())
+	t.Cleanup(func() { testMCPResultAfterCancellationCheck.Store(nil) })
+
+	go func() {
+		sent := <-stream.sent
+		deliverMCPResultFromReporter(&pb.TaskResult{
+			Id:         sent.GetId(),
+			Type:       model.TaskTypeExec,
+			Successful: true,
+			Data:       `{"exit_code":0}`,
+		}, target)
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := CallAgent(context.Background(), target, model.TaskTypeExec,
+			model.ExecRequest{Cmd: "x"}, 2*time.Second)
+		errCh <- err
+	}()
+	<-resultClaimed
+	CancelAllMCPInflight()
+	close(resumeResult)
+	if err := <-errCh; err != nil {
+		t.Fatalf("result claimed before kill switch must succeed, got %v", err)
 	}
 }
 

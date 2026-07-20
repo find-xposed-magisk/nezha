@@ -2,7 +2,7 @@ package controller
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -115,9 +115,20 @@ func handleServerExec(c *gin.Context, raw json.RawMessage) (any, error) {
 	// handlers do, so MCP isError=true and audit outcome=agent_error. Non-zero
 	// ExitCode alone is a normal command outcome, not a tool error.
 	if res.Error != "" {
-		return nil, errors.New(res.Error)
+		return nil, &execToolError{mcpError: mcpError{Code: model.MCPOutcomeAgentError, Msg: res.Error}, result: res}
 	}
 	return res, nil
+}
+
+type execToolError struct {
+	mcpError
+	result model.ExecResult
+}
+
+func (err *execToolError) StructuredResult() any { return err.result }
+
+func (err *execToolError) Error() string {
+	return fmt.Sprintf("%s: %s", err.Code, err.Msg)
 }
 
 // callAgentTimeout 给 dashboard 侧 CallAgent 计算等待上限。

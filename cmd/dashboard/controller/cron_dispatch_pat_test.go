@@ -46,13 +46,14 @@ func setupCronDispatchPATFixture(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Cron{}, &model.Server{}, &model.User{}, &model.NotificationGroup{}, &model.Notification{}))
 
 	singleton.DB = db
 	singleton.Loc = time.UTC
 	singleton.Cache = cache.New(time.Minute, time.Minute)
 	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
-	singleton.CronShared = singleton.NewCronClass()
 	// CronTrigger 的 fan-out 路径会在 server 没接入 task-stream 时调
 	// NotificationShared.SendNotification 上报「离线」；这里给出一个空的
 	// notification class，避免 nil deref。本测试不验证通知内容。
@@ -66,12 +67,16 @@ func setupCronDispatchPATFixture(t *testing.T) {
 		sc.InsertForTest(s)
 	}
 	singleton.ServerShared = sc
+	singleton.CronShared = singleton.NewCronClass()
 
 	singleton.UserLock.Lock()
 	singleton.UserInfoMap = map[uint64]model.UserInfo{100: {Role: model.RoleMember}}
 	singleton.UserLock.Unlock()
 
 	t.Cleanup(func() {
+		// Test-owned cron jobs must be joined before restoring process-global singleton dependencies.
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Cache = originalCache
 		singleton.Loc = originalLoc

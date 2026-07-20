@@ -18,10 +18,14 @@ const MCPMinAgentVersion = "v2.1.0"
 // requireAgentSupportsMCP 在 tool handler 调 CallAgent 之前快速失败不支持的 agent。
 // 仅作为 UX 优化：真正的安全/正确性由 agent 端 task switch 的 default 分支保障。
 func requireAgentSupportsMCP(server *model.Server) error {
-	if MCPMinAgentVersion == "" || server == nil || server.Host == nil {
+	if MCPMinAgentVersion == "" || server == nil {
 		return nil
 	}
-	if compareSemver(server.Host.Version, MCPMinAgentVersion) < 0 {
+	runtime := server.RuntimeSnapshot()
+	if runtime.Host == nil {
+		return nil
+	}
+	if compareSemver(runtime.Host.Version, MCPMinAgentVersion) < 0 {
 		return errMCPUnsupported
 	}
 	return nil

@@ -64,10 +64,10 @@ func issueJWTSession(c *gin.Context, user *model.User, jwtTimeoutHours int) (map
 
 func initParams() *jwt.GinJWTMiddleware {
 	return &jwt.GinJWTMiddleware{
-		Realm:       singleton.Conf.SiteName,
-		Key:         []byte(singleton.Conf.JWTSecretKey),
-		CookieName:  "nz-jwt",
-		SendCookie:  true,
+		Realm:      singleton.Conf.SiteName,
+		Key:        []byte(singleton.Conf.JWTSecretKey),
+		CookieName: "nz-jwt",
+		SendCookie: true,
 		// Pin the signing algorithm so a future library default change (or an
 		// `alg: none` confusion attempt) cannot weaken token validation.
 		SigningAlgorithm: "HS256",

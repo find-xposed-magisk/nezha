@@ -33,14 +33,16 @@ func setupCronPATWhitelistFixture(t *testing.T) (cronID7, cronID8 uint64) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Cron{}, &model.Server{}, &model.User{}))
 
 	singleton.DB = db
 	singleton.Loc = time.UTC
 	singleton.Cache = cache.New(time.Minute, time.Minute)
 	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
-	singleton.CronShared = singleton.NewCronClass()
 	singleton.ServerShared = singleton.NewServerClass()
+	singleton.CronShared = singleton.NewCronClass()
 	singleton.UserLock.Lock()
 	singleton.UserInfoMap = map[uint64]model.UserInfo{100: {Role: model.RoleMember}}
 	singleton.UserLock.Unlock()
@@ -67,6 +69,8 @@ func setupCronPATWhitelistFixture(t *testing.T) (cronID7, cronID8 uint64) {
 	singleton.CronShared.Update(cr8)
 
 	t.Cleanup(func() {
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Cache = originalCache
 		singleton.Loc = originalLoc

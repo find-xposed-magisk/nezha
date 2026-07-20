@@ -7,22 +7,39 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
-func mcpEndpointTestCtx(t *testing.T, tok *model.APIToken, body any) (*gin.Context, *httptest.ResponseRecorder) {
+func mcpEndpointTestCtx(t *testing.T, tok *model.APIToken, body any) (*gin.Context, *httptest.ResponseRecorder, error) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	raw, _ := json.Marshal(body)
+	c, engine := gin.CreateTestContext(w)
+	require.NotNil(t, engine)
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, nil, err
+	}
 	c.Request = httptest.NewRequest("POST", "/mcp", bytes.NewReader(raw))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(apiTokenCtxKey, tok)
 	c.Set(model.CtxKeyAPIToken, tok)
-	return c, w
+	return c, w, nil
+}
+
+func TestMCPEndpointTestCtx_surfacesJSONMarshalError(t *testing.T) {
+	// Given
+	tok := &model.APIToken{ID: 4242, UserID: 1}
+	unsupportedBody := map[string]any{"unsupported": func() {}}
+
+	// When
+	_, _, err := mcpEndpointTestCtx(t, tok, unsupportedBody)
+
+	// Then
+	require.Error(t, err)
 }
 
 // An unknown tool name in tools/call must still consume the per-token rate
@@ -53,7 +70,8 @@ func TestMCPUnknownToolCountsAgainstRateLimit(t *testing.T) {
 
 	var lastStatus int
 	for i := 0; i < 5; i++ {
-		c, w := mcpEndpointTestCtx(t, tok, body)
+		c, w, err := mcpEndpointTestCtx(t, tok, body)
+		require.NoError(t, err)
 		mcpEndpoint(c)
 		lastStatus = w.Code
 	}

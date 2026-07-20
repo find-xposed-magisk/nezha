@@ -135,6 +135,8 @@ func newValidationContext(t *testing.T, userID uint64, role model.Role) *gin.Con
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
+	sqlDB, err := db.DB()
+	assert.NoError(t, err)
 	assert.NoError(t, db.AutoMigrate(
 		&model.Cron{},
 		&model.Server{},
@@ -169,8 +171,8 @@ func newValidationContext(t *testing.T, userID uint64, role model.Role) *gin.Con
 	singleton.DB = db
 	singleton.Loc = time.Local
 	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
-	singleton.CronShared = singleton.NewCronClass()
 	singleton.ServerShared = singleton.NewServerClass()
+	singleton.CronShared = singleton.NewCronClass()
 	singleton.UserLock.Lock()
 	singleton.UserInfoMap = map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin},
@@ -178,6 +180,8 @@ func newValidationContext(t *testing.T, userID uint64, role model.Role) *gin.Con
 	}
 	singleton.UserLock.Unlock()
 	t.Cleanup(func() {
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Loc = originalLoc
 		singleton.Localizer = originalLocalizer

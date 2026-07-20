@@ -50,8 +50,12 @@ func setupCoverPATFixture(t *testing.T) {
 	originalCron := singleton.CronShared
 	originalServer := singleton.ServerShared
 	originalUserInfo := singleton.UserInfoMap
+	originalNotification := singleton.NotificationShared
+	originalSentinel := singleton.ServiceSentinelShared
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Cron{}, &model.Server{}, &model.User{}, &model.Service{}, &model.NotificationGroup{}, &model.ServiceHistory{}))
 
@@ -59,18 +63,15 @@ func setupCoverPATFixture(t *testing.T) {
 	singleton.Loc = time.UTC
 	singleton.Cache = cache.New(time.Minute, time.Minute)
 	singleton.Localizer = i18n.NewLocalizer("en_US", "nezha", "translations", i18n.Translations)
+	singleton.NotificationShared = singleton.NewEmptyNotificationClassForTest()
+	sc := singleton.NewEmptyServerClassForTest()
+	singleton.ServerShared = sc
 	singleton.CronShared = singleton.NewCronClass()
 
-	originalSentinel := singleton.ServiceSentinelShared
 	sentinel, err := singleton.NewServiceSentinel(make(chan *model.Service, 4))
 	require.NoError(t, err)
 	singleton.ServiceSentinelShared = sentinel
-	t.Cleanup(func() {
-		sentinel.Close()
-		singleton.ServiceSentinelShared = originalSentinel
-	})
 
-	sc := singleton.NewEmptyServerClassForTest()
 	for _, id := range []uint64{1, 2} {
 		s := &model.Server{}
 		s.ID = id
@@ -84,12 +85,18 @@ func setupCoverPATFixture(t *testing.T) {
 	singleton.UserLock.Unlock()
 
 	t.Cleanup(func() {
+		// Background components must be joined before restoring process globals.
+		sentinel.Close()
+		singleton.CronShared.Close()
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Cache = originalCache
 		singleton.Loc = originalLoc
 		singleton.Localizer = originalLocalizer
 		singleton.CronShared = originalCron
 		singleton.ServerShared = originalServer
+		singleton.NotificationShared = originalNotification
+		singleton.ServiceSentinelShared = originalSentinel
 		singleton.UserLock.Lock()
 		singleton.UserInfoMap = originalUserInfo
 		singleton.UserLock.Unlock()

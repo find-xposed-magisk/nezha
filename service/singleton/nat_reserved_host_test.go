@@ -120,12 +120,12 @@ func TestIsReservedDashboardHostCollapsesEquivalentForms(t *testing.T) {
 	})
 
 	reserved := []string{
-		"panel.example.com.",             // trailing dot, no port
-		"panel.example.com.:8008",        // trailing dot with port
-		"PANEL.EXAMPLE.COM.",             // trailing dot, mixed case
-		"[0:0:0:0:0:0:0:1]:8008",         // IPv6 expanded form of ::1
-		"::1",                            // IPv6 compressed, bare
-		"[::1]",                          // IPv6 compressed, bracketed
+		"panel.example.com.",      // trailing dot, no port
+		"panel.example.com.:8008", // trailing dot with port
+		"PANEL.EXAMPLE.COM.",      // trailing dot, mixed case
+		"[0:0:0:0:0:0:0:1]:8008",  // IPv6 expanded form of ::1
+		"::1",                     // IPv6 compressed, bare
+		"[::1]",                   // IPv6 compressed, bracketed
 	}
 	for _, d := range reserved {
 		if !IsReservedDashboardHost(d) {

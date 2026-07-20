@@ -17,6 +17,7 @@ type MCPRateLimiter struct {
 	secLimit  int
 	minLimit  int
 	lastPrune time.Time
+	clock     func() time.Time
 }
 
 type tokenWindow struct {
@@ -34,10 +35,15 @@ type tokenWindow struct {
 const mcpRateLimiterPruneInterval = time.Minute
 
 func newMCPRateLimiter(secLimit, minLimit int) *MCPRateLimiter {
+	return newMCPRateLimiterWithClock(secLimit, minLimit, time.Now)
+}
+
+func newMCPRateLimiterWithClock(secLimit, minLimit int, clock func() time.Time) *MCPRateLimiter {
 	return &MCPRateLimiter{
 		perToken: make(map[uint64]*tokenWindow),
 		secLimit: secLimit,
 		minLimit: minLimit,
+		clock:    clock,
 	}
 }
 
@@ -58,9 +64,11 @@ func (r *MCPRateLimiter) Allow(tokenID uint64) bool {
 	if tokenID == 0 {
 		return true
 	}
-	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Sampling while holding the state lock linearizes the clock read with the
+	// bucket update, so a delayed sample cannot commit after a newer rollover.
+	now := r.clock()
 	if now.Sub(r.lastPrune) >= mcpRateLimiterPruneInterval {
 		r.pruneStaleLocked(now)
 		r.lastPrune = now

@@ -10,10 +10,7 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
-// A tool error must not ship structuredContent: strict clients validate it
-// against the tool's outputSchema (which requires exec/fs result fields) and
-// reject the whole response with -32602, masking the real isError text.
-func TestServerExec_ErrorResult_OmitsStructuredContent(t *testing.T) {
+func TestServerExec_ErrorResult_PreservesStructuredContent(t *testing.T) {
 	cleanup, uid := setupMCPTest(t)
 	defer cleanup()
 
@@ -40,8 +37,12 @@ func TestServerExec_ErrorResult_OmitsStructuredContent(t *testing.T) {
 	require.True(t, tcr.IsError)
 	require.Contains(t, tcr.Content[0].Text, "agent disabled command execution",
 		"error text must carry the real cause")
-	require.Nil(t, tcr.StructuredContent,
-		"error responses must omit structuredContent so strict clients don't validate it against outputSchema and mask the real error")
+	var result model.ExecResult
+	structuredJSON, err := json.Marshal(tcr.StructuredContent)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(structuredJSON, &result))
+	require.Equal(t, -1, result.ExitCode)
+	require.Equal(t, "agent disabled command execution", result.Error)
 }
 
 func TestScopeDenied_OmitsStructuredContent(t *testing.T) {
@@ -62,6 +63,5 @@ func TestScopeDenied_OmitsStructuredContent(t *testing.T) {
 	_, tcr := decodeRPC(w)
 	require.NotNil(t, tcr)
 	require.True(t, tcr.IsError)
-	require.Nil(t, tcr.StructuredContent,
-		"scope-denied error must also omit structuredContent")
+	require.Nil(t, tcr.StructuredContent)
 }

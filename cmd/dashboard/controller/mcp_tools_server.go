@@ -136,7 +136,8 @@ func handleServerList(c *gin.Context, raw json.RawMessage) (any, error) {
 		if !tok.CanAccessServer(s.ID) {
 			continue
 		}
-		online := !s.LastActive.IsZero() && now.Sub(s.LastActive) < onlineWindow
+		runtime := s.RuntimeSnapshot()
+		online := !runtime.LastActive.IsZero() && now.Sub(runtime.LastActive) < onlineWindow
 		if args.OnlineOnly && !online {
 			continue
 		}
@@ -145,11 +146,11 @@ func handleServerList(c *gin.Context, raw json.RawMessage) (any, error) {
 			Name:       s.Name,
 			UUID:       s.UUID,
 			Online:     online,
-			LastActive: s.LastActive,
+			LastActive: runtime.LastActive,
 		}
-		if s.Host != nil {
-			item.Platform = s.Host.Platform
-			item.Arch = s.Host.Arch
+		if runtime.Host != nil {
+			item.Platform = runtime.Host.Platform
+			item.Arch = runtime.Host.Arch
 		}
 		if s.GeoIP != nil {
 			item.IPv4 = s.GeoIP.IP.IPv4Addr
@@ -187,15 +188,16 @@ func handleServerGet(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	runtime := s.RuntimeSnapshot()
 	return map[string]any{
 		"id":          s.ID,
 		"name":        s.Name,
 		"uuid":        s.UUID,
 		"note":        s.Note,
 		"public_note": s.PublicNote,
-		"host":        s.Host,
-		"state":       s.State,
+		"host":        runtime.Host,
+		"state":       runtime.State,
 		"geoip":       s.GeoIP,
-		"last_active": s.LastActive,
+		"last_active": runtime.LastActive,
 	}, nil
 }

@@ -586,5 +586,3 @@ func (b *bigReader) Read(p []byte) (int, error) {
 	b.remaining -= int64(n)
 	return n, nil
 }
-
-

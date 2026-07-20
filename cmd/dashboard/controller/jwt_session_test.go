@@ -30,6 +30,8 @@ func setupJWTSessionTest(t *testing.T) (cleanup func()) {
 	originalConf := singleton.Conf
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.JWTSession{}, &model.WAF{}))
 	singleton.DB = db
 	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{JWTTimeout: 1}}
@@ -42,6 +44,7 @@ func setupJWTSessionTest(t *testing.T) (cleanup func()) {
 	}).Error)
 
 	return func() {
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Conf = originalConf
 	}

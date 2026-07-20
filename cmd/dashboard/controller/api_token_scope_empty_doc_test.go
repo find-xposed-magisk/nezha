@@ -15,9 +15,9 @@ import (
 
 // restScopeMiddleware 的"空 scope"实际行为：PAT 调用方一律 403。
 // 这条测试把注释与实现的契约对齐：
-//   1. 实际行为：PAT + scope="" → 403。
-//   2. 文档约束：源码注释必须明确说出"空 scope 对 PAT 仍被拒绝"，
-//      不能再保留"空字符串 = 放行"这种与实现相反的旧措辞。
+//  1. 实际行为：PAT + scope="" → 403。
+//  2. 文档约束：源码注释必须明确说出"空 scope 对 PAT 仍被拒绝"，
+//     不能再保留"空字符串 = 放行"这种与实现相反的旧措辞。
 func TestRestScopeMiddleware_EmptyScopeRejectsPAT(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

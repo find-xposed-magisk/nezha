@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	apiTokenSecretLength    = 32                          // 明文 token 随机部分长度（hex 编码前）
-	apiTokenCtxKey          = "nz_api_token"              // #nosec G101 -- gin context key name, not a credential
-	apiTokenLastUsedCtxKey  = "nz_api_token_used_marker"  // #nosec G101 -- gin context key name, not a credential
+	apiTokenSecretLength     = 32                         // 明文 token 随机部分长度（hex 编码前）
+	apiTokenCtxKey           = "nz_api_token"             // #nosec G101 -- gin context key name, not a credential
+	apiTokenLastUsedCtxKey   = "nz_api_token_used_marker" // #nosec G101 -- gin context key name, not a credential
+	apiTokenReadOnlyCtxKey   = "nz_api_token_read_only"   // #nosec G101 -- gin context key name, not a credential
 	apiTokenAuthSchemePrefix = "Bearer "
 )
 
@@ -204,6 +205,7 @@ func deleteAPIToken(c *gin.Context) (any, error) {
 // 命中但 token 无效：直接 401 并 abort，不再走到 JWT。
 func apiTokenAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		readOnly := apiTokenAuthReadOnly(c)
 		raw := strings.TrimSpace(c.GetHeader("Authorization"))
 		if raw == "" {
 			return
@@ -223,7 +225,9 @@ func apiTokenAuthMiddleware() gin.HandlerFunc {
 		err := singleton.DB.Where("token_hash = ?", model.HashAPIToken(plaintext)).First(&tok).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+				if !readOnly {
+					model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+				}
 				abortAPITokenUnauthorized(c, "invalid api token")
 				return
 			}
@@ -232,19 +236,25 @@ func apiTokenAuthMiddleware() gin.HandlerFunc {
 		}
 		now := time.Now()
 		if tok.IsExpired(now) {
-			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+			if !readOnly {
+				model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+			}
 			abortAPITokenUnauthorized(c, "api token expired")
 			return
 		}
 
 		var user model.User
 		if err := singleton.DB.First(&user, tok.UserID).Error; err != nil {
-			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+			if !readOnly {
+				model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+			}
 			abortAPITokenUnauthorized(c, "owner of api token not found")
 			return
 		}
 
-		model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
+		if !readOnly {
+			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
+		}
 
 		c.Set(model.CtxKeyAuthorizedUser, &user)
 		c.Set(apiTokenCtxKey, &tok)
@@ -253,7 +263,7 @@ func apiTokenAuthMiddleware() gin.HandlerFunc {
 		// last_used 同步更新：开销极低（一行 UPDATE），异步路径在
 		// 多连接 sqlite 测试场景下会和测试 teardown 形成竞态，并把
 		// `last_used_*` 写丢到不可见的 :memory: 实例。生产路径上等价。
-		if v, ok := c.Get(apiTokenLastUsedCtxKey); !ok || v != true {
+		if !readOnly && apiTokenLastUsedOnce(c) {
 			c.Set(apiTokenLastUsedCtxKey, true)
 			_ = singleton.DB.Model(&model.APIToken{}).
 				Where("id = ?", tok.ID).

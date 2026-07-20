@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
-	"github.com/jinzhu/copier"
 	"gorm.io/gorm"
 
 	"github.com/nezhahq/nezha/model"
@@ -31,10 +30,13 @@ import (
 // @Router /server [get]
 func listServer(c *gin.Context) ([]*model.Server, error) {
 	slist := singleton.ServerShared.GetSortedList()
-
-	var ssl []*model.Server
-	if err := copier.Copy(&ssl, &slist); err != nil {
-		return nil, err
+	ssl := make([]*model.Server, 0, len(slist))
+	for _, server := range slist {
+		if server == nil {
+			continue
+		}
+		runtime := server.RuntimeSnapshot()
+		ssl = append(ssl, server.RuntimeCopy(runtime))
 	}
 	return ssl, nil
 }

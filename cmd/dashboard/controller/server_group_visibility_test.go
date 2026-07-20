@@ -32,6 +32,8 @@ func setupServerGroupVisibilityFixture(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Server{}, &model.ServerGroup{}, &model.ServerGroupServer{}, &model.User{}))
 
 	singleton.DB = db
@@ -55,6 +57,7 @@ func setupServerGroupVisibilityFixture(t *testing.T) {
 	singleton.ServerShared = singleton.NewServerClass()
 
 	t.Cleanup(func() {
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 		singleton.Cache = originalCache
 		singleton.Loc = originalLoc

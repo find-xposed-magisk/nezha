@@ -23,9 +23,12 @@ func setupAPITokenTest(t *testing.T) func() {
 	originalDB := singleton.DB
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.Server{}))
 	singleton.DB = db
 	return func() {
+		_ = sqlDB.Close()
 		singleton.DB = originalDB
 	}
 }
