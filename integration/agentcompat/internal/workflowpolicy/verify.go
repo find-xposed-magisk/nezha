@@ -3,6 +3,7 @@ package workflowpolicy
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -25,7 +26,12 @@ func Verify(data []byte, repository Repository) error {
 }
 
 func VerifyFile(path string, repository Repository) error {
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return &ReadError{Path: path, Cause: err}
+	}
+	defer root.Close()
+	data, err := root.ReadFile(filepath.Base(path))
 	if err != nil {
 		return &ReadError{Path: path, Cause: err}
 	}
