@@ -41,11 +41,22 @@ func TestSupervisor_RunsChildWithConfiguredCredential(t *testing.T) {
 	requireNoError(t, err)
 	executablePath := filepath.Join(credentialDirectory, "process-helper")
 	requireNoError(t, os.WriteFile(executablePath, testBinary, 0o755))
+	uncredentialed := newHelperSupervisor(t.Context(), "credential", []string{helperMarkerEnv + "=" + marker})
+	uncredentialed.spec.Path = executablePath
+	requireNoError(t, uncredentialed.Start())
+	requireNoError(t, uncredentialed.Wait(t.Context()))
+	requireNoError(t, os.Remove(marker))
+
 	supervisor.spec.Path = executablePath
 	supervisor.spec.Credential = &syscall.Credential{Uid: 65534, Gid: 65534}
 
 	// When
-	requireNoError(t, supervisor.Start())
+	if err := supervisor.Start(); err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			t.Skipf("credentialed helper execution is not permitted: %v", err)
+		}
+		t.Fatalf("start credentialed helper: %v", err)
+	}
 	requireNoError(t, supervisor.Wait(t.Context()))
 
 	// Then
