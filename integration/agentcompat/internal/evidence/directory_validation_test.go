@@ -164,7 +164,10 @@ func validMetadata(t *testing.T, resultsDir, scenarioName string) Metadata {
 	if err != nil {
 		t.Fatalf("profile: %v", err)
 	}
-	paths, err := contract.NewPaths("/src/nezha", "/src/agent", resultsDir)
+	sourceRoot := t.TempDir()
+	nezhaSource := filepath.Join(sourceRoot, "nezha-source")
+	agentSource := filepath.Join(sourceRoot, "agent-source")
+	paths, err := contract.NewPaths(nezhaSource, agentSource, resultsDir)
 	if err != nil {
 		t.Fatalf("paths: %v", err)
 	}
