@@ -67,10 +67,15 @@ func socketInode(file *os.File) (uint64, error) {
 }
 
 func listenerInodePresent(inode uint64) (bool, error) {
-	for _, path := range []string{"/proc/self/net/tcp", "/proc/self/net/tcp6"} {
-		file, err := os.Open(path)
+	procNet, err := os.OpenRoot("/proc/self/net")
+	if err != nil {
+		return false, fmt.Errorf("open listener tables: %w", err)
+	}
+	defer procNet.Close()
+	for _, name := range []string{"tcp", "tcp6"} {
+		file, err := procNet.Open(name)
 		if err != nil {
-			return false, fmt.Errorf("open listener table %s: %w", path, err)
+			return false, fmt.Errorf("open listener table %s: %w", name, err)
 		}
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {

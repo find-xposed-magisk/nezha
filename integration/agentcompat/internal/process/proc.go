@@ -15,8 +15,13 @@ import (
 )
 
 func readRSSBytes(pid int) (uint64, error) {
-	path := filepath.Join("/proc", strconv.Itoa(pid), "status")
-	file, err := os.Open(path)
+	path := filepath.Join(strconv.Itoa(pid), "status")
+	procRoot, err := os.OpenRoot("/proc")
+	if err != nil {
+		return 0, err
+	}
+	defer procRoot.Close()
+	file, err := procRoot.Open(path)
 	if err != nil {
 		return 0, err
 	}
@@ -73,8 +78,13 @@ func descendantPIDs(rootPID int) ([]int, error) {
 }
 
 func readParentPID(pid int) (int, error) {
-	path := filepath.Join("/proc", strconv.Itoa(pid), "stat")
-	data, err := os.ReadFile(path)
+	path := filepath.Join(strconv.Itoa(pid), "stat")
+	procRoot, err := os.OpenRoot("/proc")
+	if err != nil {
+		return 0, err
+	}
+	defer procRoot.Close()
+	data, err := procRoot.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
@@ -130,8 +140,16 @@ func parseSocketInode(target string) (uint64, bool) {
 }
 
 func listeningSocketInodes(pid int, protocol string) (map[uint64]struct{}, error) {
-	path := filepath.Join("/proc", strconv.Itoa(pid), "net", protocol)
-	file, err := os.Open(path)
+	if protocol != "tcp" && protocol != "tcp6" {
+		return nil, errors.New("unsupported proc network protocol")
+	}
+	path := filepath.Join(strconv.Itoa(pid), "net", protocol)
+	procRoot, err := os.OpenRoot("/proc")
+	if err != nil {
+		return nil, err
+	}
+	defer procRoot.Close()
+	file, err := procRoot.Open(path)
 	if err != nil {
 		return nil, err
 	}
