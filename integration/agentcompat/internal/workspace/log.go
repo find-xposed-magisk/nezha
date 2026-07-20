@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/nezhahq/nezha/integration/agentcompat/internal/evidence"
@@ -27,7 +28,12 @@ type LogFile struct {
 }
 
 func newLogFile(path string, maxBytes int) (*LogFile, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, fmt.Errorf("open workspace log directory: %w", err)
+	}
+	defer root.Close()
+	file, err := root.OpenFile(filepath.Base(path), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create workspace log: %w", err)
 	}
