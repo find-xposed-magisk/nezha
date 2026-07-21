@@ -74,8 +74,11 @@ type ServiceSentinel struct {
 	serviceCurrentStatusData     map[uint64]*serviceTaskStatus    // 当前任务结果缓存
 	serviceResponseDataStore     map[uint64]serviceResponseData   // 当前数据
 
-	serviceResponsePing map[uint64]map[uint64]*pingStore // [service_id] -> ClientID -> delay
-	tlsCertCache        map[uint64]string
+	serviceResponsePing                   map[uint64]map[uint64]*pingStore // guarded by serviceResponseDataStoreLock; [service_id] -> ClientID -> delay
+	tlsCertCache                          map[uint64]string                // guarded by serviceResponseDataStoreLock
+	serviceReportValidatedHook            func(uint64)
+	loadStatsResponseLockedHook           func()
+	serviceReportBeforeTLSSideEffectsHook func(uint64)
 
 	servicesLock    sync.RWMutex
 	serviceListLock sync.RWMutex
@@ -386,6 +389,7 @@ func (ss *ServiceSentinel) Delete(ids []uint64) {
 	for _, id := range ids {
 		delete(ss.serviceCurrentStatusData, id)
 		delete(ss.serviceResponseDataStore, id)
+		delete(ss.serviceResponsePing, id)
 		delete(ss.tlsCertCache, id)
 		delete(ss.serviceStatusToday, id)
 
@@ -398,12 +402,15 @@ func (ss *ServiceSentinel) Delete(ids []uint64) {
 }
 
 func (ss *ServiceSentinel) LoadStats() map[uint64]*serviceResponseItem {
-	ss.servicesLock.RLock()
-	defer ss.servicesLock.RUnlock()
 	ss.serviceResponseDataStoreLock.RLock()
 	defer ss.serviceResponseDataStoreLock.RUnlock()
+	if ss.loadStatsResponseLockedHook != nil {
+		ss.loadStatsResponseLockedHook()
+	}
 	ss.monthlyStatusLock.Lock()
 	defer ss.monthlyStatusLock.Unlock()
+	ss.servicesLock.RLock()
+	defer ss.servicesLock.RUnlock()
 
 	// 刷新最新一天的数据
 	for k := range ss.services {
@@ -536,8 +543,23 @@ func (ss *ServiceSentinel) worker() {
 			log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
 			continue
 		}
+		if ss.serviceReportValidatedHook != nil {
+			ss.serviceReportValidatedHook(r.Data.GetId())
+		}
 
 		mh := r.Data
+		// Serialize Delete and Update before this accepted report causes any side effect.
+		ss.serviceResponseDataStoreLock.Lock()
+		serviceStatusToday := ss.serviceStatusToday[mh.GetId()]
+		serviceCurrentStatusData := ss.serviceCurrentStatusData[mh.GetId()]
+		currentService, serviceExists := ss.Get(mh.GetId())
+		if serviceStatusToday == nil || serviceCurrentStatusData == nil || !serviceExists ||
+			!canReportServiceResult(currentService, reporter, mh.GetType()) {
+			ss.serviceResponseDataStoreLock.Unlock()
+			continue
+		}
+		cs = currentService
+
 		if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
 			// TCP/ICMP Ping 使用平均值计算后再写入
 			serviceTcpMap, ok := ss.serviceResponsePing[mh.GetId()]
@@ -594,33 +616,31 @@ func (ss *ServiceSentinel) worker() {
 			}
 		}
 
-		ss.serviceResponseDataStoreLock.Lock()
 		// 写入当天状态
 		if mh.Successful {
-			ss.serviceStatusToday[mh.GetId()].Delay = (ss.serviceStatusToday[mh.
-				GetId()].Delay*float64(ss.serviceStatusToday[mh.GetId()].Up) +
-				float64(mh.Delay)) / float64(ss.serviceStatusToday[mh.GetId()].Up+1)
-			ss.serviceStatusToday[mh.GetId()].Up++
+			serviceStatusToday.Delay = (serviceStatusToday.Delay*float64(serviceStatusToday.Up) +
+				float64(mh.Delay)) / float64(serviceStatusToday.Up+1)
+			serviceStatusToday.Up++
 		} else {
-			ss.serviceStatusToday[mh.GetId()].Down++
+			serviceStatusToday.Down++
 		}
 
 		currentTime := time.Now()
-		if ss.serviceCurrentStatusData[mh.GetId()].t.IsZero() {
-			ss.serviceCurrentStatusData[mh.GetId()].t = currentTime
+		if serviceCurrentStatusData.t.IsZero() {
+			serviceCurrentStatusData.t = currentTime
 		}
 
 		// 写入当前数据
-		if ss.serviceCurrentStatusData[mh.GetId()].t.Before(currentTime) {
-			ss.serviceCurrentStatusData[mh.GetId()].t = currentTime.Add(30 * time.Second)
-			ss.serviceCurrentStatusData[mh.GetId()].result = append(ss.serviceCurrentStatusData[mh.GetId()].result, mh)
+		if serviceCurrentStatusData.t.Before(currentTime) {
+			serviceCurrentStatusData.t = currentTime.Add(30 * time.Second)
+			serviceCurrentStatusData.result = append(serviceCurrentStatusData.result, mh)
 		}
 
 		// 更新当前状态
 		ss.serviceResponseDataStore[mh.GetId()] = serviceResponseData{}
 
 		// 永远是最新的 30 个数据的状态 [01:00, 02:00, 03:00] -> [04:00, 02:00, 03: 00]
-		for _, cs := range ss.serviceCurrentStatusData[mh.GetId()].result {
+		for _, cs := range serviceCurrentStatusData.result {
 			if cs.GetId() > 0 {
 				rd := ss.serviceResponseDataStore[mh.GetId()]
 				if cs.Successful {
@@ -644,8 +664,8 @@ func (ss *ServiceSentinel) worker() {
 			stateCode = GetStatusCode(upPercent)
 		}
 
-		if len(ss.serviceCurrentStatusData[mh.GetId()].result) == _CurrentStatusSize {
-			ss.serviceCurrentStatusData[mh.GetId()].t = currentTime
+		if len(serviceCurrentStatusData.result) == _CurrentStatusSize {
+			serviceCurrentStatusData.t = currentTime
 			if !TSDBEnabled() {
 				rd := ss.serviceResponseDataStore[mh.GetId()]
 				if err := DB.Create(&model.ServiceHistory{
@@ -658,10 +678,9 @@ func (ss *ServiceSentinel) worker() {
 					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 				}
 			}
-			ss.serviceCurrentStatusData[mh.GetId()].result = ss.serviceCurrentStatusData[mh.GetId()].result[:0]
+			serviceCurrentStatusData.result = serviceCurrentStatusData.result[:0]
 		}
 
-		cs, _ = ss.Get(mh.GetId())
 		m := ServerShared.GetList()
 		// 延迟报警
 		if mh.Delay > 0 {
@@ -669,16 +688,18 @@ func (ss *ServiceSentinel) worker() {
 		}
 
 		// 状态变更报警+触发任务执行
-		if stateCode == StatusDown || stateCode != ss.serviceCurrentStatusData[mh.GetId()].lastStatus {
-			lastStatus := ss.serviceCurrentStatusData[mh.GetId()].lastStatus
+		if stateCode == StatusDown || stateCode != serviceCurrentStatusData.lastStatus {
+			lastStatus := serviceCurrentStatusData.lastStatus
 			// 存储新的状态值
-			ss.serviceCurrentStatusData[mh.GetId()].lastStatus = stateCode
+			serviceCurrentStatusData.lastStatus = stateCode
 
 			notifyCheck(&r, m, cs, mh, lastStatus, stateCode)
 		}
-		ss.serviceResponseDataStoreLock.Unlock()
 
 		// TLS 证书报警
+		if ss.serviceReportBeforeTLSSideEffectsHook != nil {
+			ss.serviceReportBeforeTLSSideEffectsHook(mh.GetId())
+		}
 		var errMsg string
 		if strings.HasPrefix(mh.Data, "SSL证书错误：") {
 			// i/o timeout、connection timeout、EOF 错误
@@ -746,6 +767,7 @@ func (ss *ServiceSentinel) worker() {
 				}
 			}
 		}
+		ss.serviceResponseDataStoreLock.Unlock()
 	}
 }
 
