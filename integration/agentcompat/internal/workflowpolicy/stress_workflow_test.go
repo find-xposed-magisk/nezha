@@ -10,7 +10,7 @@ import (
 
 const agentcompatStressTestName = "TestStressPRFullEightAgentExactlyOnce"
 
-func TestPolicy_NezhaStressWorkflowRunsPinnedCrossRepositoryTest(t *testing.T) {
+func TestPolicy_NezhaStressWorkflowRunsCrossRepositoryTest(t *testing.T) {
 	// Given
 	data := readNezhaQualityWorkflow(t)
 	var workflow qualityWorkflow
@@ -27,7 +27,7 @@ func TestPolicy_NezhaStressWorkflowRunsPinnedCrossRepositoryTest(t *testing.T) {
 	require.Len(t, stressJob.Steps, 6)
 	require.Equal(t, []string{
 		"Checkout Nezha revision",
-		"Checkout pinned Agent revision",
+		"Checkout Agent repository",
 		"Set up Go",
 		"Prepare Dashboard build inputs",
 		"Require named stress test",
@@ -42,21 +42,21 @@ func TestPolicy_NezhaStressWorkflowRunsPinnedCrossRepositoryTest(t *testing.T) {
 	})
 
 	nezhaCheckout := stressJob.stepNamed(t, "Checkout Nezha revision")
-	require.Equal(t, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", nezhaCheckout.Uses)
+	require.Equal(t, "actions/checkout@v7.0.1", nezhaCheckout.Uses)
 	require.Empty(t, nezhaCheckout.With.Repository)
 	require.Empty(t, nezhaCheckout.With.Ref)
 	require.Equal(t, "nezha", nezhaCheckout.With.Path)
 	require.False(t, *nezhaCheckout.With.PersistCredentials)
 
-	agentCheckout := stressJob.stepNamed(t, "Checkout pinned Agent revision")
-	require.Equal(t, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", agentCheckout.Uses)
+	agentCheckout := stressJob.stepNamed(t, "Checkout Agent repository")
+	require.Equal(t, "actions/checkout@v7.0.1", agentCheckout.Uses)
 	require.Equal(t, "nezhahq/agent", agentCheckout.With.Repository)
-	require.Equal(t, "667e1dd5e166ffef808ec26dc20de85bc33a0a0f", agentCheckout.With.Ref)
+	require.Empty(t, agentCheckout.With.Ref)
 	require.Equal(t, "agent", agentCheckout.With.Path)
 	require.False(t, *agentCheckout.With.PersistCredentials)
 
 	setupGo := stressJob.stepNamed(t, "Set up Go")
-	require.Equal(t, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16", setupGo.Uses)
+	require.Equal(t, "actions/setup-go@v7", setupGo.Uses)
 	require.Equal(t, "1.26.x", setupGo.With.GoVersion)
 	require.False(t, *setupGo.With.Cache)
 

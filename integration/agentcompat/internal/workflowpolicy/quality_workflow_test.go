@@ -164,11 +164,11 @@ func requireCheckoutAndSetupGo(t *testing.T, steps []qualityStep) {
 	t.Helper()
 	require.GreaterOrEqual(t, len(steps), 2)
 	checkout := steps[0]
-	require.Equal(t, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", checkout.Uses)
+	require.Equal(t, "actions/checkout@v7.0.1", checkout.Uses)
 	require.NotNil(t, checkout.With.PersistCredentials)
 	require.False(t, *checkout.With.PersistCredentials)
 	setupGo := steps[1]
-	require.Equal(t, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16", setupGo.Uses)
+	require.Equal(t, "actions/setup-go@v7", setupGo.Uses)
 	require.Equal(t, "1.26.x", setupGo.With.GoVersion)
 	require.NotNil(t, setupGo.With.Cache)
 	require.False(t, *setupGo.With.Cache)
