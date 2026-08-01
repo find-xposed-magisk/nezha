@@ -26,3 +26,8 @@
   repository: "https://github.com/hamster1963/nezha-ascii"
   author: "hamster1963"
   version: "v1.1.0"
+- path: "nezha-pixel-dist"
+  name: "Nezha-Pixel"
+  repository: "https://github.com/karllao/nezha-pixel"
+  author: "karllao"
+  version: "v1.5.0"
