@@ -1,6 +1,6 @@
 package controller
 
-// TDD regression tests for GHSA-jx78-55p5-rwv5 (CVE-2026-53522):
+// TDD regression tests for GHSA-jg62-j5h6-8mpq (CVE-2026-53522):
 // Unbounded WebSocket Streams — Resource Exhaustion DoS.
 //
 // The vulnerability: POST /api/v1/terminal and POST /api/v1/file insert a new
@@ -51,7 +51,7 @@ func setupQuotaTest(t *testing.T) (cleanup func(), successStream *failingRequest
 
 // TestCreateTerminalEnforcesPerUserStreamQuota verifies that once a user has
 // reached the per-user stream cap, subsequent createTerminal calls are rejected
-// with ErrTooManyStreamsForUser. This directly tests the GHSA-jx78-55p5-rwv5
+// with ErrTooManyStreamsForUser. This directly tests the GHSA-jg62-j5h6-8mpq
 // fix at the HTTP handler layer.
 func TestCreateTerminalEnforcesPerUserStreamQuota(t *testing.T) {
 	cleanup, _ := setupQuotaTest(t)
