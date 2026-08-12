@@ -14,6 +14,11 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
+// Allow the frontend's 512 KiB clipboard payload plus xterm's bracketed-paste
+// control bytes, while keeping the complete tagged message below the 1 MiB
+// IO stream relay buffer.
+const terminalWebSocketInputLimit int64 = 512*1024 + 64
+
 // Create web ssh terminal
 // @Summary Create web ssh terminal
 // @Description Create web ssh terminal
@@ -100,6 +105,7 @@ func terminalStream(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, newWsError("%v", err)
 	}
+	wsConn.SetReadLimit(terminalWebSocketInputLimit)
 	conn := websocketx.NewConn(wsConn)
 	pingTransport := newWebsocketPingTransport(conn, wsConn.Close)
 	stopPing := startWebsocketPingTicker(c.Request.Context(), time.Second*10, pingTransport)
