@@ -240,6 +240,11 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64,linux/s390x
+          # Aliyun Container Registry rejects BuildKit attestation manifests
+          # (application/vnd.oci.empty.v1+json). Both registries share this
+          # multi-platform push, so publish a plain OCI image index here.
+          provenance: false
+          sbom: false
           push: true
           tags: |
             ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:latest
