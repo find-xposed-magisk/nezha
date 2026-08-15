@@ -484,6 +484,9 @@ func createService(c *gin.Context) (uint64, error) {
 	if err := c.ShouldBindJSON(&mf); err != nil {
 		return 0, err
 	}
+	if err := model.ValidateServiceMonitorType(uint64(mf.Type)); err != nil {
+		return 0, err
+	}
 
 	if !isValidServiceCover(mf.Cover) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
@@ -546,6 +549,9 @@ func updateService(c *gin.Context) (any, error) {
 	}
 	var mf model.ServiceForm
 	if err := c.ShouldBindJSON(&mf); err != nil {
+		return nil, err
+	}
+	if err := model.ValidateServiceMonitorType(uint64(mf.Type)); err != nil {
 		return nil, err
 	}
 

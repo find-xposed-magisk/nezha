@@ -43,7 +43,12 @@ type ConfigForGuests struct {
 
 type ConfigDashboard struct {
 	InstallHost string `koanf:"install_host" json:"install_host,omitempty"`
-	AgentTLS    bool   `koanf:"tls" json:"tls,omitempty"` // 用于前端判断生成的安装命令是否启用 TLS
+	// AgentTLS controls the transport emitted by Agent installation commands.
+	// false intentionally supports trusted private networks and does not provide
+	// Dashboard peer authentication; Internet-facing control planes must use
+	// verified TLS. Changing this compatibility default belongs in the installer
+	// migration path, not in the gRPC task authorization model.
+	AgentTLS bool `koanf:"tls" json:"tls,omitempty"`
 
 	// DashboardHost 是 dashboard 对外访问的主机名，专用于 OAuth2 回调地址。
 	// 它与 InstallHost（agent 连接用主机名）解耦：两者可以是不同域名。

@@ -222,6 +222,9 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 	if userId == 0 {
 		// The legacy global agent secret maps to user 0. It predates per-user
 		// agent secrets, so keep it compatible by allowing any existing UUID.
+		// Possession of this deployment-wide master credential is therefore not
+		// a tenant-scoped authorization claim. Removal must follow an inventory and
+		// credential-rotation migration or legacy Agents will be locked out.
 		return cid, true, nil
 	}
 	if server.GetUserID() == userId {

@@ -21,8 +21,12 @@ type StreamServerData struct {
 }
 
 type ServerForm struct {
-	Name                string              `json:"name,omitempty"`
-	Note                string              `json:"note,omitempty" validate:"optional"`           // 管理员可见备注
+	Name string `json:"name,omitempty"`
+	Note string `json:"note,omitempty" validate:"optional"` // 管理员可见备注
+	// PublicNote is opaque public metadata consumed by independently maintained
+	// user themes. The Dashboard stores/transports it but never renders it as
+	// HTML or navigates URL-like fields. Themes must validate schemes before
+	// using nested values such as customData.orderLink in href/window.open.
 	PublicNote          string              `json:"public_note,omitempty" validate:"optional"`    // 公开备注
 	DisplayIndex        int                 `json:"display_index,omitempty" default:"0"`          // 展示排序，越大越靠前
 	HideForGuest        bool                `json:"hide_for_guest,omitempty" validate:"optional"` // 对游客隐藏

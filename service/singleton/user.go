@@ -23,7 +23,10 @@ func initUser() {
 	var users []model.User
 	DB.Find(&users)
 
-	// for backward compatibility
+	// Backward compatibility for pre-user-scoped Agents. AgentSecretKey is a
+	// deployment-wide migration/master credential, so user 0 is intentionally
+	// not tenant-scoped. Do not remove this mapping until every legacy Agent has
+	// rotated to a per-user/per-Agent credential; doing so would disconnect them.
 	UserInfoMap[0] = model.UserInfo{
 		Role:        model.RoleAdmin,
 		AgentSecret: Conf.AgentSecretKey,

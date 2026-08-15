@@ -26,8 +26,11 @@ import (
 // code to their own origin and bind the victim's identity. A request Host is
 // trusted only when it is an operator-declared dashboard host (the same
 // allowlist that guards NAT routing). Otherwise the redirect is pinned to the
-// operator-declared DashboardHost; when DashboardHost is empty the operator has
-// not pinned a dashboard origin, so the request Host is passed through.
+// operator-declared DashboardHost. Empty DashboardHost intentionally retains
+// dynamic/multi-domain deployments by passing through request Host; those
+// deployments must validate Host at their trusted proxy and register exact
+// redirect URIs at the OAuth provider. GHSA-rf68-8gjr-36q7 documents this
+// configuration boundary and must be updated if this compatibility changes.
 func getRedirectURL(c *gin.Context) string {
 	scheme := "http://"
 	referer := c.Request.Referer()

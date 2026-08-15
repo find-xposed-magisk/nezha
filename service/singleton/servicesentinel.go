@@ -209,7 +209,15 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		return err
 	}
 
+	validServices := services[:0]
 	for _, service := range services {
+		if err := model.ValidateServiceMonitorType(uint64(service.Type)); err != nil {
+			// Existing databases may contain values written before Service.Type was
+			// constrained. Quarantine them in the database for operator review, but
+			// never register a cron job that could dispatch a privileged Agent task.
+			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
+			continue
+		}
 		task := service
 		// 通过cron定时将服务监控任务传递给任务调度管道
 		service.CronJobID, err = CronShared.AddFunc(task.CronSpec(), func() {
@@ -222,7 +230,9 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		ss.serviceCurrentStatusData[service.ID] = new(serviceTaskStatus)
 		ss.serviceCurrentStatusData[service.ID].result = make([]*pb.TaskResult, 0, _CurrentStatusSize)
 		ss.serviceStatusToday[service.ID] = &_TodayStatsOfService{}
+		validServices = append(validServices, service)
 	}
+	services = validServices
 	ss.serviceList = services
 	sortServices(ss.serviceList)
 
@@ -339,6 +349,13 @@ func (ss *ServiceSentinel) loadTodayStats(today time.Time) {
 }
 
 func (ss *ServiceSentinel) Update(m *model.Service) error {
+	if m == nil {
+		return fmt.Errorf("service is nil")
+	}
+	if err := model.ValidateServiceMonitorType(uint64(m.Type)); err != nil {
+		return err
+	}
+
 	ss.serviceResponseDataStoreLock.Lock()
 	defer ss.serviceResponseDataStoreLock.Unlock()
 	ss.monthlyStatusLock.Lock()

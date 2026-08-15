@@ -39,6 +39,30 @@ const (
 	TaskTypeFsTransfer
 )
 
+// IsServiceMonitorType reports whether t is a passive service probe. Service
+// monitors and privileged Agent-control tasks share the protobuf Task.Type
+// namespace, so every path that persists, schedules, or dispatches a Service
+// must use this allowlist instead of accepting an arbitrary task integer.
+func IsServiceMonitorType(t uint64) bool {
+	switch t {
+	case TaskTypeHTTPGet, TaskTypeICMPPing, TaskTypeTCPPing:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateServiceMonitorType returns an actionable error at API, model, and
+// scheduler boundaries. Keeping the check in model avoids a future caller
+// accidentally turning a monitor-only capability into Agent command/config
+// execution by copying Service.Type into pb.Task.Type.
+func ValidateServiceMonitorType(t uint64) error {
+	if !IsServiceMonitorType(t) {
+		return fmt.Errorf("invalid service monitor type %d: allowed types are 1 (HTTP GET), 2 (ICMP ping), and 3 (TCP ping)", t)
+	}
+	return nil
+}
+
 // IsMCPRPCResult 判定一个 TaskResult.Type 是否属于 MCP 走 RequestTask 通道的
 // 一次性 RPC 类型。dashboard 的 RequestTask 接收循环用它把这些回包路由到
 // Server.inflightRPC 等待方，而不是走 ServiceSentinel。
@@ -232,6 +256,9 @@ type Service struct {
 }
 
 func (m *Service) PB() *pb.Task {
+	if m == nil || !IsServiceMonitorType(uint64(m.Type)) {
+		return nil
+	}
 	return &pb.Task{
 		Id:   m.ID,
 		Type: uint64(m.Type),
@@ -300,6 +327,9 @@ func (m *Service) CronSpec() string {
 }
 
 func (m *Service) BeforeSave(tx *gorm.DB) error {
+	if err := ValidateServiceMonitorType(uint64(m.Type)); err != nil {
+		return err
+	}
 	if data, err := json.Marshal(m.SkipServers); err != nil {
 		return err
 	} else {
@@ -336,15 +366,9 @@ func (m *Service) AfterFind(tx *gorm.DB) error {
 	return nil
 }
 
-// IsServiceSentinelNeeded 判断该任务类型是否需要进行服务监控 需要则返回true
+// IsServiceSentinelNeeded accepts results only for the three probe types. An
+// unknown or privileged task type must never enter ServiceSentinel merely
+// because it was not listed in a denylist.
 func IsServiceSentinelNeeded(t uint64) bool {
-	switch t {
-	case TaskTypeCommand, TaskTypeTerminalGRPC, TaskTypeUpgrade,
-		TaskTypeKeepalive, TaskTypeNAT, TaskTypeFM,
-		TaskTypeReportConfig, TaskTypeApplyConfig,
-		TaskTypeServerTransferApply:
-		return false
-	default:
-		return true
-	}
+	return IsServiceMonitorType(t)
 }

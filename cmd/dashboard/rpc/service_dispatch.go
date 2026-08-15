@@ -14,6 +14,17 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 		if task == nil {
 			continue
 		}
+		if err := model.ValidateServiceMonitorType(uint64(task.Type)); err != nil {
+			// Defense in depth for stale database rows and future internal callers:
+			// Service.Type shares its integer namespace with command/config tasks.
+			log.Printf("NEZHA>> DispatchTask rejected service %d: %v", task.ID, err)
+			continue
+		}
+		probe := task.PB()
+		if probe == nil {
+			log.Printf("NEZHA>> DispatchTask rejected service %d: invalid probe", task.ID)
+			continue
+		}
 
 		switch task.Cover {
 		case model.ServiceCoverIgnoreAll:
@@ -29,7 +40,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				if !canSendTaskToServer(task, server) {
 					continue
 				}
-				if err := server.SendTask(task.PB()); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
+				if err := server.SendTask(probe); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
 					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}
@@ -41,7 +52,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				if !canSendTaskToServer(task, server) {
 					continue
 				}
-				if err := server.SendTask(task.PB()); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
+				if err := server.SendTask(probe); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
 					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}

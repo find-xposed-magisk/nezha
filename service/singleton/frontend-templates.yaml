@@ -16,6 +16,10 @@
   repository: "https://github.com/karllao/nezha-pixel"
   author: "karllao"
   version: "v1.6.0"
+# Third-party user themes consume the opaque Server.PublicNote field. Theme
+# maintainers must validate URL schemes (including after decoding) before using
+# values such as customData.orderLink in href or window.open; the Dashboard
+# backend and admin frontend do not execute those fields.
 - path: "nazhua-dist"
   name: "Nazhua"
   repository: "https://github.com/hi2shark/nazhua"
