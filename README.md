@@ -83,7 +83,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/acgpiano" title="Acgpiano"><img src="https://avatars.githubusercontent.com/u/15900800?v=4" width="50;" alt="Acgpiano"/></a>
 <a href="https://github.com/eya46" title="eya46"><img src="https://avatars.githubusercontent.com/u/61458340?v=4" width="50;" alt="eya46"/></a>
 <a href="https://github.com/guoyongchang" title="guoyongchang"><img src="https://avatars.githubusercontent.com/u/10484506?v=4" width="50;" alt="guoyongchang"/></a>
-<a href="https://github.com/hiDandelion" title="Takuma Kirishima"><img src="https://avatars.githubusercontent.com/u/77157418?v=4" width="50;" alt="Takuma Kirishima"/></a>
+<a href="https://github.com/hiDandelion" title="霧島拓真"><img src="https://avatars.githubusercontent.com/u/77157418?v=4" width="50;" alt="霧島拓真"/></a>
 <a href="https://github.com/honeok" title="honeok"><img src="https://avatars.githubusercontent.com/u/100125733?v=4" width="50;" alt="honeok"/></a>
 <a href="https://github.com/yuanweize" title="IYUANWEIZE"><img src="https://avatars.githubusercontent.com/u/30067203?v=4" width="50;" alt="IYUANWEIZE"/></a>
 <a href="https://github.com/igophper" title="igophper"><img src="https://avatars.githubusercontent.com/u/34326532?v=4" width="50;" alt="igophper"/></a>
@@ -111,6 +111,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/TomyJan" title="TomyJan"><img src="https://avatars.githubusercontent.com/u/67973160?v=4" width="50;" alt="TomyJan"/></a>
 <a href="https://github.com/hmsjy2017" title="Tony"><img src="https://avatars.githubusercontent.com/u/42692274?v=4" width="50;" alt="Tony"/></a>
 <a href="https://github.com/ace-consultoria" title="ace-consultoria"><img src="https://avatars.githubusercontent.com/u/263983342?v=4" width="50;" alt="ace-consultoria"/></a>
+<a href="https://github.com/77-QiQi" title="77-QiQi"><img src="https://avatars.githubusercontent.com/u/87052253?v=4" width="50;" alt="77-QiQi"/></a>
 <a href="https://github.com/railzen" title="Chra"><img src="https://avatars.githubusercontent.com/u/48409318?v=4" width="50;" alt="Chra"/></a>
 <a href="https://github.com/Mubelotix" title="Mubelotix"><img src="https://avatars.githubusercontent.com/u/42696684?v=4" width="50;" alt="Mubelotix"/></a>
 <a href="https://github.com/zhdsmy" title="zhdsmy"><img src="https://avatars.githubusercontent.com/u/8348149?v=4" width="50;" alt="zhdsmy"/></a><!--GAMFC_DELIMITER_END-->
