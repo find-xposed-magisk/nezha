@@ -44,8 +44,15 @@
       🌐 <a href="http://www.99cdn.com/?addid=nezha">99cdn</a>
     </td>
     <td align="center" width="25%">
-      🤝<br><br>
-      <b>期待您的支持</b>
+      <a href="https://www.axisnow.io/zh">
+        <img src=".github/sponsor/axisnow.jpeg" alt="AxisNow" width="160">
+      </a>
+      <br>
+      <b>AxisNow｜自建私有部署 CDN｜订阅式高防 CDN</b>
+      <br>
+      自主可控、灵活组合的 CDN 网络
+      <br><br>
+      🌐 <a href="https://www.axisnow.io/zh">AxisNow</a>
     </td>
     <td align="center" width="25%">
       🤝<br><br>
