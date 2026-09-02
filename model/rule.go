@@ -15,12 +15,23 @@ const (
 	RuleCoverIgnoreAll
 )
 
+// MaxAlertRuleDuration is the largest duration that can be converted to int
+// on every architecture supported by Go. Alert rules are persisted as uint64,
+// but their sampling windows use int indexes; keeping the public bound at
+// MaxInt32 prevents a crafted value from wrapping during that conversion.
+const MaxAlertRuleDuration uint64 = 1<<31 - 1
+
+// MaxAlertRuleCycleInterval also leaves room for the largest integer
+// multiplication performed by the calendar helpers (weeks become 7*interval)
+// on 32-bit targets.
+const MaxAlertRuleCycleInterval uint64 = (1<<31 - 1) / 7
+
 type NResult struct {
 	N uint64
 }
 
 type Rule struct {
-	// 指标类型，cpu、memory、swap、disk、net_in_speed、net_out_speed
+	// 指标类型，cpu、gpu/gpu_max、memory、swap、disk、net_in_speed、net_out_speed
 	// net_all_speed、transfer_in、transfer_out、transfer_all、offline
 	// transfer_in_cycle、transfer_out_cycle、transfer_all_cycle
 	Type          string          `json:"type"`
@@ -45,8 +56,52 @@ func percentage(used, total uint64) float64 {
 	return float64(used) * 100 / float64(total)
 }
 
+// IsSupportedType reports whether the rule type has an evaluator. Keep this
+// list in lockstep with Snapshot's switch so untrusted strings cannot enter the
+// persisted alert pipeline and silently acquire fallback semantics.
+func (u *Rule) IsSupportedType() bool {
+	if u == nil {
+		return false
+	}
+	switch u.Type {
+	case "cpu", "gpu", "gpu_max", "memory", "swap", "disk",
+		"net_in_speed", "net_out_speed", "net_all_speed",
+		"transfer_in", "transfer_out", "transfer_all", "offline",
+		"transfer_in_cycle", "transfer_out_cycle", "transfer_all_cycle",
+		"load1", "load5", "load15", "tcp_conn_count", "udp_conn_count",
+		"process_count", "temperature_max":
+		return true
+	default:
+		return false
+	}
+}
+
+// DurationInt converts the persisted duration without allowing uint64-to-int
+// truncation. Callers must handle ok=false as an invalid rule.
+func (u *Rule) DurationInt() (duration int, ok bool) {
+	if u == nil || u.Duration > MaxAlertRuleDuration {
+		return 0, false
+	}
+	return int(u.Duration), true
+}
+
+// HasSafeCycleConfiguration guards every value that the cycle evaluator later
+// converts or dereferences. It intentionally does not reject an empty unit,
+// which is the documented legacy spelling for hours.
+func (u *Rule) HasSafeCycleConfiguration() bool {
+	return u != nil && u.IsTransferDurationRule() && u.CycleStart != nil &&
+		u.CycleInterval > 0 && u.CycleInterval <= MaxAlertRuleCycleInterval
+}
+
 // Snapshot 未通过规则返回 false, 通过返回 true
 func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
+	if u == nil || server == nil || !u.IsSupportedType() {
+		return true
+	}
+	if u.IsTransferDurationRule() && (!u.HasSafeCycleConfiguration() || cycleTransferStats == nil) {
+		return true
+	}
+
 	// 监控全部但是排除了此服务器
 	if u.Cover == RuleCoverAll && u.Ignore[server.ID] {
 		return true
@@ -71,7 +126,10 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	switch u.Type {
 	case "cpu":
 		src = float64(state.CPU)
-	case "gpu_max":
+	case "gpu", "gpu_max":
+		if len(state.GPU) == 0 {
+			return true
+		}
 		src = slices.Max(state.GPU)
 	case "memory":
 		if runtime.Host == nil {
@@ -141,14 +199,17 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(state.ProcessCount)
 	case "temperature_max":
 		var temp []float64
-		if state.Temperatures != nil {
-			for _, tempStat := range state.Temperatures {
-				if tempStat.Temperature != 0 {
-					temp = append(temp, tempStat.Temperature)
-				}
+		for _, tempStat := range state.Temperatures {
+			if tempStat.Temperature != 0 {
+				temp = append(temp, tempStat.Temperature)
 			}
-			src = slices.Max(temp)
 		}
+		if len(temp) == 0 {
+			return true
+		}
+		src = slices.Max(temp)
+	default:
+		return true
 	}
 
 	// 循环区间流量检测 · 更新下次需要检测时间
@@ -187,11 +248,19 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 
 // IsTransferDurationRule 判断该规则是否属于周期流量规则 属于则返回true
 func (u *Rule) IsTransferDurationRule() bool {
-	return strings.HasSuffix(u.Type, "_cycle")
+	if u == nil {
+		return false
+	}
+	switch u.Type {
+	case "transfer_in_cycle", "transfer_out_cycle", "transfer_all_cycle":
+		return true
+	default:
+		return false
+	}
 }
 
 func (u *Rule) IsOfflineRule() bool {
-	return u.Type == "offline"
+	return u != nil && u.Type == "offline"
 }
 
 // GetTransferDurationStart 获取周期流量的起始时间

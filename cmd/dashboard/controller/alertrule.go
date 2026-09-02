@@ -172,6 +172,12 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 	}
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
+			if rule == nil {
+				return singleton.Localizer.ErrorT("rule is not set")
+			}
+			if !rule.IsSupportedType() {
+				return singleton.Localizer.ErrorT("unsupported rule type")
+			}
 			switch rule.Cover {
 			case model.RuleCoverAll, model.RuleCoverIgnoreAll:
 			default:
@@ -182,9 +188,15 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 				if rule.Duration < 3 {
 					return singleton.Localizer.ErrorT("duration need to be at least 3")
 				}
+				if rule.Duration > model.MaxAlertRuleDuration {
+					return singleton.Localizer.ErrorT("duration is too large")
+				}
 			} else {
 				if rule.CycleInterval < 1 {
 					return singleton.Localizer.ErrorT("cycle_interval need to be at least 1")
+				}
+				if rule.CycleInterval > model.MaxAlertRuleCycleInterval {
+					return singleton.Localizer.ErrorT("cycle_interval is too large")
 				}
 				if rule.CycleStart == nil {
 					return singleton.Localizer.ErrorT("cycle_start is not set")

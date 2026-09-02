@@ -117,3 +117,53 @@ func TestCheckStatus_SampleMemoryBounded(t *testing.T) {
 		t.Fatalf("sample capacity grew unbounded: peak cap %d exceeds 4x window %d", peakCap, duration*4)
 	}
 }
+
+func TestCheckStatusForServerRecoversUnexpectedEvaluatorPanic(t *testing.T) {
+	originalStore := alertsStore
+	originalPrevState := alertsPrevState
+	originalCycleStore := AlertsCycleTransferStatsStore
+	alertsStore = map[uint64]map[uint64][][]bool{}
+	alertsPrevState = map[uint64]map[uint64]uint8{}
+	AlertsCycleTransferStatsStore = map[uint64]*model.CycleTransferStats{}
+	t.Cleanup(func() {
+		alertsStore = originalStore
+		alertsPrevState = originalPrevState
+		AlertsCycleTransferStatsStore = originalCycleStore
+	})
+
+	enabled := true
+	alert := &model.AlertRule{
+		Common: model.Common{ID: 77, UserID: 2},
+		Enable: &enabled,
+		Rules:  []*model.Rule{{Type: "cpu", Duration: 3, Cover: model.RuleCoverAll}},
+	}
+	server := &model.Server{Common: model.Common{ID: 1, UserID: 2}}
+	model.InitServer(server)
+
+	// The deliberately missing alertsStore[alert.ID] map panics at assignment
+	// after evaluation. The per-alert/server recovery boundary must contain it.
+	checkStatusForServer(alert, server)
+}
+
+func TestAddCycleTransferStatsSkipsPoisonedPersistedRule(t *testing.T) {
+	original := AlertsCycleTransferStatsStore
+	AlertsCycleTransferStatsStore = map[uint64]*model.CycleTransferStats{}
+	t.Cleanup(func() { AlertsCycleTransferStatsStore = original })
+
+	enabled := true
+	alert := &model.AlertRule{
+		Common: model.Common{ID: 88},
+		Enable: &enabled,
+		Rules: []*model.Rule{{
+			Type:          "transfer_in_cycle",
+			CycleInterval: 1,
+			Cover:         model.RuleCoverAll,
+			// CycleStart intentionally nil, as it may be in a poisoned legacy DB row.
+		}},
+	}
+
+	addCycleTransferStatsInfo(alert)
+	if _, exists := AlertsCycleTransferStatsStore[alert.ID]; exists {
+		t.Fatal("invalid persisted cycle rule must not be scheduled")
+	}
+}

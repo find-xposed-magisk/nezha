@@ -64,6 +64,36 @@ func (r *AlertRule) Enabled() bool {
 	return r.Enable != nil && *r.Enable
 }
 
+// IsSafeToEvaluate validates persisted rule data before it reaches the alert
+// goroutine. API validation protects new writes; this second boundary protects
+// upgrades from malformed or deliberately poisoned rows already in the DB.
+func (r *AlertRule) IsSafeToEvaluate() bool {
+	if r == nil || len(r.Rules) == 0 {
+		return false
+	}
+	for _, rule := range r.Rules {
+		if rule == nil || !rule.IsSupportedType() {
+			return false
+		}
+		switch rule.Cover {
+		case RuleCoverAll, RuleCoverIgnoreAll:
+		default:
+			return false
+		}
+		if rule.IsTransferDurationRule() {
+			if !rule.HasSafeCycleConfiguration() {
+				return false
+			}
+			continue
+		}
+		duration, ok := rule.DurationInt()
+		if !ok || duration < 3 {
+			return false
+		}
+	}
+	return true
+}
+
 // HasPermission extends the default owner/admin check with PAT
 // server_ids whitelist enforcement. AlertRule.Snapshot fans out across
 // every owner-visible server filtered only by Rule.Ignore semantics
@@ -125,6 +155,12 @@ func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Ser
 	point := make([]bool, len(r.Rules))
 
 	for i, rule := range r.Rules {
+		if rule == nil || !rule.IsSupportedType() {
+			// Invalid persisted rules are ignored instead of being interpreted as
+			// a failed condition or allowed to panic the sentinel.
+			point[i] = true
+			continue
+		}
 		point[i] = rule.Snapshot(cycleTransferStats, server, db)
 	}
 	return point
@@ -134,10 +170,14 @@ func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Ser
 func (r *AlertRule) Check(points [][]bool) (int, bool) {
 	var hasPassedRule bool
 	durations := make([]int, len(r.Rules))
+	validRules := 0
 
 	for ruleIndex, rule := range r.Rules {
-		duration := int(rule.Duration)
+		if rule == nil || !rule.IsSupportedType() {
+			continue
+		}
 		if rule.IsTransferDurationRule() {
+			validRules++
 			// 循环区间流量报警
 			if durations[ruleIndex] < 1 {
 				durations[ruleIndex] = 1
@@ -146,10 +186,21 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 				continue
 			}
 			// 只要最后一次检查超出了规则范围 就认为检查未通过
-			if len(points) > 0 && points[len(points)-1][ruleIndex] {
-				hasPassedRule = true
+			if len(points) > 0 {
+				lastPoint := points[len(points)-1]
+				if ruleIndex >= len(lastPoint) || lastPoint[ruleIndex] {
+					hasPassedRule = true
+				}
 			}
-		} else if rule.IsOfflineRule() {
+			continue
+		}
+
+		duration, ok := rule.DurationInt()
+		if !ok || duration <= 0 {
+			continue
+		}
+		validRules++
+		if rule.IsOfflineRule() {
 			// 离线报警，检查直到最后一次在线的离线采样点是否大于 duration
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
@@ -157,7 +208,7 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			var fail int
 			for _, point := range slices.Backward(points[len(points)-duration:]) {
 				fail++
-				if point[ruleIndex] {
+				if ruleIndex >= len(point) || point[ruleIndex] {
 					hasPassedRule = true
 					break
 				}
@@ -168,11 +219,7 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			// 常规报警
 			// duration<=0 是无意义的规则（持续 0 秒）：直接跳过该规则，
 			// 既不污染 hasPassedRule（否则会连带跳过同一 alert 里其它有效
-			// 规则），也避免下方 fail*100/total 在 total=0 时整数除零 panic
-			// —— checkStatus 无 recover，一次 panic 会拖垮整个告警 goroutine。
-			if duration <= 0 {
-				continue
-			}
+			// 规则），也避免下方百分比计算在 total=0 时除零。
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}
@@ -181,17 +228,20 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			}
 			total, fail := duration, 0
 			for timeTick := len(points) - duration; timeTick < len(points); timeTick++ {
-				if !points[timeTick][ruleIndex] {
+				if ruleIndex >= len(points[timeTick]) || !points[timeTick][ruleIndex] {
 					fail++
 				}
 			}
 			// 当70%以上的采样点未通过规则判断时 才认为当前检查未通过
-			if fail*100/total <= 70 {
+			if float64(fail)*100/float64(total) <= 70 {
 				hasPassedRule = true
 			}
 		}
 	}
 
+	if validRules == 0 {
+		return 0, true
+	}
 	// 仅当所有检查均未通过时 才触发告警
 	return slices.Max(durations), hasPassedRule
 }
@@ -205,10 +255,13 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 func (r *AlertRule) RetentionWindow() int {
 	window := 0
 	for _, rule := range r.Rules {
+		if rule == nil || !rule.IsSupportedType() {
+			continue
+		}
 		var need int
 		if rule.IsTransferDurationRule() {
 			need = 1
-		} else if d := int(rule.Duration); d > 0 {
+		} else if d, ok := rule.DurationInt(); ok && d > 0 {
 			need = d
 		}
 		if need > window {
