@@ -57,7 +57,7 @@ func TestPolicy_NezhaStressWorkflowRunsCrossRepositoryTest(t *testing.T) {
 
 	setupGo := stressJob.stepNamed(t, "Set up Go")
 	require.Equal(t, "actions/setup-go@v7", setupGo.Uses)
-	require.Equal(t, "1.26.x", setupGo.With.GoVersion)
+	require.Equal(t, "1.26.6", setupGo.With.GoVersion)
 	require.False(t, *setupGo.With.Cache)
 
 	prepareDashboardInputs := stressJob.stepNamed(t, "Prepare Dashboard build inputs")
