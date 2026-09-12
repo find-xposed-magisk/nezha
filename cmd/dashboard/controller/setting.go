@@ -97,6 +97,9 @@ func updateConfig(c *gin.Context) (any, error) {
 
 	singleton.Conf.EnableIPChangeNotification = sf.EnableIPChangeNotification
 	singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
+	if sf.AllowJWTIPChange != nil {
+		singleton.Conf.SetJWTIPChangeAllowed(*sf.AllowJWTIPChange)
+	}
 	singleton.Conf.Cover = sf.Cover
 	singleton.Conf.InstallHost = sf.InstallHost
 	singleton.Conf.DashboardHost = sf.DashboardHost
@@ -160,6 +163,12 @@ func fireMCPKillSwitch() {
 // the current config to avoid accidentally tripping the kill switch on
 // partial PATCH calls that omit enable_mcp.
 func resolveSettingEnableMCP(formValue *bool, current bool) bool {
+	return resolveOptionalBool(formValue, current)
+}
+
+// resolveOptionalBool preserves a setting for partial PATCH requests when its
+// boolean field is absent, while still allowing an explicit false value.
+func resolveOptionalBool(formValue *bool, current bool) bool {
 	if formValue == nil {
 		return current
 	}
