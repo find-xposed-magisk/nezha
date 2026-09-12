@@ -35,9 +35,28 @@ type HostState struct {
 	ProcessCount   uint64              `json:"process_count,omitempty"`
 	Temperatures   []SensorTemperature `json:"temperatures,omitempty"`
 	GPU            []float64           `json:"gpu,omitempty"`
+	GPUs           []GPUStat           `json:"gpus,omitempty"`
+}
+
+// GPUStat carries per-card figures, index-aligned with Host.GPU. Memory is in
+// MiB and stays zero for vendors that do not report it, so MemoryTotal == 0
+// means "unknown" rather than "no memory".
+type GPUStat struct {
+	Utilization float64 `json:"utilization"`
+	MemoryUsed  uint64  `json:"memory_used,omitempty"`
+	MemoryTotal uint64  `json:"memory_total,omitempty"`
 }
 
 func (s *HostState) PB() *pb.State {
+	gs := make([]*pb.State_GPU, 0, len(s.GPUs))
+	for _, g := range s.GPUs {
+		gs = append(gs, &pb.State_GPU{
+			Utilization: g.Utilization,
+			MemoryUsed:  g.MemoryUsed,
+			MemoryTotal: g.MemoryTotal,
+		})
+	}
+
 	var ts []*pb.State_SensorTemperature
 	for _, t := range s.Temperatures {
 		ts = append(ts, &pb.State_SensorTemperature{
@@ -64,10 +83,20 @@ func (s *HostState) PB() *pb.State {
 		ProcessCount:   s.ProcessCount,
 		Temperatures:   ts,
 		Gpu:            s.GPU,
+		Gpus:           gs,
 	}
 }
 
 func PB2State(s *pb.State) HostState {
+	var gs []GPUStat
+	for _, g := range s.GetGpus() {
+		gs = append(gs, GPUStat{
+			Utilization: g.GetUtilization(),
+			MemoryUsed:  g.GetMemoryUsed(),
+			MemoryTotal: g.GetMemoryTotal(),
+		})
+	}
+
 	var ts []SensorTemperature
 	for _, t := range s.GetTemperatures() {
 		ts = append(ts, SensorTemperature{
@@ -93,6 +122,7 @@ func PB2State(s *pb.State) HostState {
 		UdpConnCount:   s.GetUdpConnCount(),
 		ProcessCount:   s.GetProcessCount(),
 		Temperatures:   ts,
+		GPUs:           gs,
 		GPU:            s.GetGpu(),
 	}
 }
