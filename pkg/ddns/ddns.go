@@ -134,8 +134,8 @@ func (provider *Provider) deleteDomainRecord(ctx context.Context, recType string
 	var targetRecords []libdns.Record
 	for _, rec := range allRecords {
 		rr := rec.RR()
-        recName := rr.Name
-        currentType := strings.ToUpper(rr.Type)
+		recName := rr.Name
+		currentType := strings.ToUpper(rr.Type)
 
 		if currentType != targetRecType {
 			continue
