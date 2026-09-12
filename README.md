@@ -119,7 +119,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/DarcJC" title="Darc Z."><img src="https://avatars.githubusercontent.com/u/53445798?v=4" width="50;" alt="Darc Z."/></a>
 <a href="https://github.com/Creling" title="Creling"><img src="https://avatars.githubusercontent.com/u/43109504?v=4" width="50;" alt="Creling"/></a>
 <a href="https://github.com/coreff" title="Core F"><img src="https://avatars.githubusercontent.com/u/38347122?v=4" width="50;" alt="Core F"/></a>
-<a href="https://github.com/wellcoming" title="Coming"><img src="https://avatars.githubusercontent.com/u/74850890?v=4" width="50;" alt="Coming"/></a>
+<a href="https://github.com/wellcoming" title="Coming Wel"><img src="https://avatars.githubusercontent.com/u/74850890?v=4" width="50;" alt="Coming Wel"/></a>
 <a href="https://github.com/adminsama" title="adminsama"><img src="https://avatars.githubusercontent.com/u/60880076?v=4" width="50;" alt="adminsama"/></a>
 <a href="https://github.com/acgpiano" title="Acgpiano"><img src="https://avatars.githubusercontent.com/u/15900800?v=4" width="50;" alt="Acgpiano"/></a>
 <a href="https://github.com/eya46" title="eya46"><img src="https://avatars.githubusercontent.com/u/61458340?v=4" width="50;" alt="eya46"/></a>
@@ -155,6 +155,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/77-QiQi" title="77-QiQi"><img src="https://avatars.githubusercontent.com/u/87052253?v=4" width="50;" alt="77-QiQi"/></a>
 <a href="https://github.com/railzen" title="Chra"><img src="https://avatars.githubusercontent.com/u/48409318?v=4" width="50;" alt="Chra"/></a>
 <a href="https://github.com/Mubelotix" title="Mubelotix"><img src="https://avatars.githubusercontent.com/u/42696684?v=4" width="50;" alt="Mubelotix"/></a>
+<a href="https://github.com/ryrenz" title="Ryrenz"><img src="https://avatars.githubusercontent.com/u/163799701?v=4" width="50;" alt="Ryrenz"/></a>
 <a href="https://github.com/zhdsmy" title="zhdsmy"><img src="https://avatars.githubusercontent.com/u/8348149?v=4" width="50;" alt="zhdsmy"/></a><!--GAMFC_DELIMITER_END-->
 
 ## Special Thanks
