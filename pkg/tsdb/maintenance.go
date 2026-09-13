@@ -10,8 +10,11 @@ func (db *TSDB) Maintenance() {
 	if db.closed {
 		return
 	}
+	if !db.acceptsWrites() {
+		return
+	}
 
 	log.Println("NEZHA>> TSDB starting maintenance (flush)...")
-	db.storage.DebugFlush()
+	db.debugFlushSafely()
 	log.Println("NEZHA>> TSDB maintenance completed")
 }

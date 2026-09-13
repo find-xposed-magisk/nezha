@@ -1,6 +1,7 @@
 package singleton
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 )
 
 var TSDBShared *tsdb.TSDB
+
+var openTSDB = tsdb.Open
 
 func InitTSDB() error {
 	config := &tsdb.Config{
@@ -44,11 +47,21 @@ func InitTSDB() error {
 		return nil
 	}
 
-	var err error
-	TSDBShared, err = tsdb.Open(config)
+	TSDBShared = nil
+	db, err := openTSDB(config)
 	if err != nil {
+		if errors.Is(err, tsdb.ErrDiskFull) {
+			log.Printf("NEZHA>> Warning: TSDB is unavailable because its disk is full; dashboard and alerts will continue without TSDB writes: %v", err)
+			if DB != nil {
+				if migrateErr := DB.AutoMigrate(model.ServiceHistory{}); migrateErr != nil {
+					log.Printf("NEZHA>> Warning: failed to prepare SQLite service history fallback: %v", migrateErr)
+				}
+			}
+			return nil
+		}
 		return err
 	}
+	TSDBShared = db
 
 	log.Println("NEZHA>> TSDB initialized successfully")
 
