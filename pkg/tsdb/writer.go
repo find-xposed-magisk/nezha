@@ -47,15 +47,26 @@ func (w *bufferedWriter) flushLoop() {
 }
 
 func (w *bufferedWriter) write(rows []storage.MetricRow) {
+	if !w.db.acceptsWrites() {
+		w.discard()
+		return
+	}
+
 	w.mu.Lock()
 	w.buffer = append(w.buffer, rows...)
 	if len(w.buffer) >= w.maxSize {
 		rows := w.buffer
 		w.buffer = make([]storage.MetricRow, 0, w.maxSize)
 		w.mu.Unlock()
-		w.db.storage.AddRows(rows, 64)
+		w.db.addRowsSafely(rows)
 		return
 	}
+	w.mu.Unlock()
+}
+
+func (w *bufferedWriter) discard() {
+	w.mu.Lock()
+	w.buffer = make([]storage.MetricRow, 0, w.maxSize)
 	w.mu.Unlock()
 }
 
@@ -69,7 +80,7 @@ func (w *bufferedWriter) flush() {
 	w.buffer = make([]storage.MetricRow, 0, w.maxSize)
 	w.mu.Unlock()
 
-	w.db.storage.AddRows(rows, 64)
+	w.db.addRowsSafely(rows)
 }
 
 func (w *bufferedWriter) stop() {
@@ -171,7 +182,7 @@ func (db *TSDB) WriteServerMetrics(m *ServerMetrics) error {
 	if db.writer != nil {
 		db.writer.write(rows)
 	} else {
-		db.storage.AddRows(rows, 64)
+		db.addRowsSafely(rows)
 	}
 	return nil
 }
@@ -200,7 +211,7 @@ func (db *TSDB) WriteServiceMetrics(m *ServiceMetrics) error {
 	if db.writer != nil {
 		db.writer.write(rows)
 	} else {
-		db.storage.AddRows(rows, 64)
+		db.addRowsSafely(rows)
 	}
 	return nil
 }
@@ -265,7 +276,7 @@ func (db *TSDB) WriteBatchServerMetrics(metrics []*ServerMetrics) error {
 	if db.writer != nil {
 		db.writer.write(rows)
 	} else {
-		db.storage.AddRows(rows, 64)
+		db.addRowsSafely(rows)
 	}
 	return nil
 }
@@ -295,7 +306,7 @@ func (db *TSDB) WriteBatchServiceMetrics(metrics []*ServiceMetrics) error {
 	if db.writer != nil {
 		db.writer.write(rows)
 	} else {
-		db.storage.AddRows(rows, 64)
+		db.addRowsSafely(rows)
 	}
 	return nil
 }
