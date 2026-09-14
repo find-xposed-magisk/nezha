@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libdns/he"
 	"github.com/libdns/libdns"
 	"github.com/miekg/dns"
 
@@ -22,9 +23,6 @@ const (
 )
 
 type Provider struct {
-	prefix string
-	zone   string
-
 	DDNSProfile *model.DDNSProfile
 	IPAddrs     *model.IP
 	Setter      libdns.RecordSetter
@@ -42,10 +40,19 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 	}
 
 	for _, domain := range domains {
-		var err error
-		provider.prefix, provider.zone, err = provider.splitDomainSOA(ctx, domain)
-		if err != nil {
-			log.Printf("NEZHA>> Failed to split domain SOA for %s: %v", domain, err)
+		var prefix, zone string
+		var soaErr error
+
+		for retries := 0; retries < maxRetries; retries++ {
+			prefix, zone, soaErr = provider.splitDomainSOA(ctx, domain)
+			if soaErr == nil {
+				break
+			}
+			log.Printf("NEZHA>> Failed to split domain SOA for %s (attempt %d/%d): %v", domain, retries+1, maxRetries, soaErr)
+		}
+
+		if soaErr != nil {
+			log.Printf("NEZHA>> Failed to split domain SOA for %s after %d retries, skipping domain", domain, maxRetries)
 			continue
 		}
 
@@ -55,9 +62,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 				log.Printf("NEZHA>> Updating IPv4 record of domain %s: %d/%d", domain, retries+1, maxRetries)
 				var ipv4Err error
 				if provider.IPAddrs.IPv4Addr == "" {
-					ipv4Err = provider.deleteDomainRecord(ctx, "A")
+					ipv4Err = provider.deleteDomainRecord(ctx, prefix, zone, "A")
 				} else {
-					ipv4Err = provider.addDomainRecord(ctx, "A", provider.IPAddrs.IPv4Addr)
+					ipv4Err = provider.addDomainRecord(ctx, prefix, zone, "A", provider.IPAddrs.IPv4Addr)
 				}
 
 				if ipv4Err != nil {
@@ -75,9 +82,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 				log.Printf("NEZHA>> Updating IPv6 record of domain %s: %d/%d", domain, retries+1, maxRetries)
 				var ipv6Err error
 				if provider.IPAddrs.IPv6Addr == "" {
-					ipv6Err = provider.deleteDomainRecord(ctx, "AAAA")
+					ipv6Err = provider.deleteDomainRecord(ctx, prefix, zone, "AAAA")
 				} else {
-					ipv6Err = provider.addDomainRecord(ctx, "AAAA", provider.IPAddrs.IPv6Addr)
+					ipv6Err = provider.addDomainRecord(ctx, prefix, zone, "AAAA", provider.IPAddrs.IPv6Addr)
 				}
 
 				if ipv6Err != nil {
@@ -91,16 +98,16 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 	}
 }
 
-func (provider *Provider) addDomainRecord(ctx context.Context, recType, addr string) error {
+func (provider *Provider) addDomainRecord(ctx context.Context, prefix, zone, recType, addr string) error {
 	netipAddr, err := netip.ParseAddr(addr)
 	if err != nil {
 		return fmt.Errorf("parse error: %v", err)
 	}
 
-	_, err = provider.Setter.SetRecords(ctx, provider.zone,
+	_, err = provider.Setter.SetRecords(ctx, zone,
 		[]libdns.Record{
 			libdns.Address{
-				Name: provider.prefix,
+				Name: prefix,
 				IP:   netipAddr,
 				TTL:  time.Minute,
 			},
@@ -109,8 +116,25 @@ func (provider *Provider) addDomainRecord(ctx context.Context, recType, addr str
 }
 
 // deleteDomainRecord 用于安全删除指定类型的解析记录
-func (provider *Provider) deleteDomainRecord(ctx context.Context, recType string) error {
-	// 同时断言 RecordGetter 与 RecordDeleter，防止提供商因缺少接口导致断言错误
+func (provider *Provider) deleteDomainRecord(ctx context.Context, prefix, zone, recType string) error {
+	targetRecType := strings.ToUpper(recType)
+
+	// 针对 HE 服务商使用标准的 libdns.RR
+	if _, ok := provider.Setter.(*he.Provider); ok {
+		deleter, okDeleter := provider.Setter.(libdns.RecordDeleter)
+		if !okDeleter {
+			return fmt.Errorf("he provider does not implement RecordDeleter")
+		}
+		_, err := deleter.DeleteRecords(ctx, zone, []libdns.Record{
+			libdns.RR{
+				Name: prefix,
+				Type: targetRecType,
+			},
+		})
+		return err
+	}
+
+	// 检查接口
 	getter, okGetter := provider.Setter.(libdns.RecordGetter)
 	deleter, okDeleter := provider.Setter.(libdns.RecordDeleter)
 
@@ -122,44 +146,15 @@ func (provider *Provider) deleteDomainRecord(ctx context.Context, recType string
 	cleanName := func(name string) string {
 		return strings.ToLower(strings.TrimSuffix(name, "."))
 	}
-	cleanPrefix := cleanName(provider.prefix)
-	targetRecType := strings.ToUpper(recType)
-
-	// 通过特征匹配识别 Hurricane Electric (HE) 等特殊供应商
-	providerType := strings.ToLower(fmt.Sprintf("%T", provider.Setter))
-	isHeProvider := strings.Contains(providerType, "he") ||
-		strings.Contains(providerType, "hurricane") ||
-		strings.Contains(providerType, "dns.he")
-
-	// 针对 HE 供应商：仅返回根域（@），无法枚举子域名
-	if isHeProvider {
-		log.Printf("NEZHA>> Provider identified as Hurricane Electric (HE) variant, using direct set deletion path for %s.%s", provider.prefix, provider.zone)
-		var dummyIP netip.Addr
-		if targetRecType == "A" {
-			dummyIP = netip.MustParseAddr("0.0.0.0")
-		} else {
-			dummyIP = netip.MustParseAddr("::")
-		}
-		_, err := provider.Setter.SetRecords(ctx, provider.zone,
-			[]libdns.Record{
-				libdns.Address{
-					Name: provider.prefix,
-					IP:   dummyIP,
-					TTL:  time.Minute,
-				},
-			})
-		return err
-	}
+	cleanPrefix := cleanName(prefix)
 
 	// 获取 DNS 记录（针对标准提供商，如 Cloudflare）
-	allRecords, err := getter.GetRecords(ctx, provider.zone)
+	allRecords, err := getter.GetRecords(ctx, zone)
 	if err != nil {
 		return fmt.Errorf("failed to get DNS records: %w", err)
 	}
 
-	cleanZone := cleanName(provider.zone)
-
-	// 筛选和匹配目标记录
+	cleanZone := cleanName(zone)
 	var targetRecords []libdns.Record
 	for _, rec := range allRecords {
 		rr := rec.RR()
@@ -167,7 +162,7 @@ func (provider *Provider) deleteDomainRecord(ctx context.Context, recType string
 			continue
 		}
 
-		relName := libdns.RelativeName(rr.Name, provider.zone)
+		relName := libdns.RelativeName(rr.Name, zone)
 		cleanRel := cleanName(relName)
 		cleanRRName := cleanName(rr.Name)
 
@@ -187,28 +182,26 @@ func (provider *Provider) deleteDomainRecord(ctx context.Context, recType string
 
 	// 若未找到对应记录（例如已经成功删除），则直接返回成功
 	if len(targetRecords) == 0 {
-		log.Printf("NEZHA>> No matching %s record found for deletion under zone %s, already clean", recType, provider.zone)
+		log.Printf("NEZHA>> No matching %s record found for deletion under zone %s, already clean", recType, zone)
 		return nil
 	}
 
-	// 执行实际删除操作
-	_, err = deleter.DeleteRecords(ctx, provider.zone, targetRecords)
+	_, err = deleter.DeleteRecords(ctx, zone, targetRecords)
 	if err != nil {
 		return fmt.Errorf("deleter.DeleteRecords failed: %w", err)
 	}
 
-	log.Printf("NEZHA>> Successfully deleted %d matching %s record(s) for %s.%s", len(targetRecords), recType, provider.prefix, provider.zone)
+	log.Printf("NEZHA>> Successfully deleted %d matching %s record(s) for %s.%s", len(targetRecords), recType, prefix, zone)
 	return nil
 }
 
-func (provider *Provider) splitDomainSOA(ctx context.Context, domain string, overrideServers ...string) (prefix string, zone string, err error) {
+func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (prefix string, zone string, err error) {
 	c := &dns.Client{Timeout: dnsTimeOut}
 
 	domain += "."
 	indexes := dns.Split(domain)
 
 	servers := utils.DNSServers
-
 	customDNSServers, _ := ctx.Value(DNSServerKey{}).([]string)
 	if len(customDNSServers) > 0 {
 		servers = customDNSServers
@@ -224,14 +217,14 @@ func (provider *Provider) splitDomainSOA(ctx context.Context, domain string, ove
 				continue
 			}
 
-			if len(r.Answer) > 0 {
+			if r != nil && len(r.Answer) > 0 {
 				if soa, ok := r.Answer[0].(*dns.SOA); ok {
-					zone := soa.Hdr.Name
-					prefix := libdns.RelativeName(domain, zone)
-					if prefix == "@" {
-						prefix = ""
+					zoneName := soa.Hdr.Name
+					pfx := libdns.RelativeName(domain, zoneName)
+					if pfx == "@" {
+						pfx = ""
 					}
-					return prefix, zone, nil
+					return pfx, zoneName, nil
 				}
 			}
 		}
