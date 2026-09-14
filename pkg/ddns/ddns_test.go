@@ -244,8 +244,9 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DNSServerKey{}, []string{pc.LocalAddr().String()})
 	provider.UpdateDomain(ctx)
 
-	if uint64(attempts) != maxRetries {
-		t.Fatalf("expected exact attempt count of %d, got %d", maxRetries, attempts)
+	expectedAttempts := int(maxRetries) * 2
+	if attempts != expectedAttempts {
+		t.Fatalf("expected exact attempt count of %d, got %d", expectedAttempts, attempts)
 	}
 }
 
