@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/libdns/libdns"
 	"github.com/miekg/dns"
