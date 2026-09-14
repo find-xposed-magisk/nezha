@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/libdns/libdns"
@@ -21,9 +22,6 @@ const (
 )
 
 type Provider struct {
-	prefix string
-	zone   string
-
 	DDNSProfile *model.DDNSProfile
 	IPAddrs     *model.IP
 	Setter      libdns.RecordSetter
@@ -34,66 +32,108 @@ func (provider *Provider) GetProfileID() uint64 {
 }
 
 func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...string) {
-	for _, domain := range utils.IfOr(len(overrideDomains) > 0, overrideDomains, provider.DDNSProfile.Domains) {
-		for retries := range int(provider.DDNSProfile.MaxRetries) {
-			log.Printf("NEZHA>> Updating DNS Record of domain %s: %d/%d", domain, retries+1, provider.DDNSProfile.MaxRetries)
-			if err := provider.updateDomain(ctx, domain); err != nil {
-				log.Printf("NEZHA>> Failed to update DNS record of domain %s: %v", domain, err)
-			} else {
-				log.Printf("NEZHA>> Update DNS record of domain %s succeeded", domain)
+	domains := utils.IfOr(len(overrideDomains) > 0, overrideDomains, provider.DDNSProfile.Domains)
+	maxRetries := int(provider.DDNSProfile.MaxRetries)
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+
+	for _, domain := range domains {
+		var prefix, zone string
+		var soaErr error
+
+		for retries := 0; retries < maxRetries; retries++ {
+			prefix, zone, soaErr = provider.splitDomainSOA(ctx, domain)
+			if soaErr == nil {
 				break
 			}
+			log.Printf("NEZHA>> Failed to split domain SOA for %s (attempt %d/%d): %v", domain, retries+1, maxRetries, soaErr)
+		}
+
+		if soaErr != nil {
+			log.Printf("NEZHA>> Failed to split domain SOA for %s after %d retries, skipping domain", domain, maxRetries)
+			continue
+		}
+
+		// 独立处理 IPv4 更新或删除
+		if provider.DDNSProfile.EnableIPv4 != nil && *provider.DDNSProfile.EnableIPv4 {
+			for retries := 0; retries < maxRetries; retries++ {
+				log.Printf("NEZHA>> Updating IPv4 record of domain %s: %d/%d", domain, retries+1, maxRetries)
+				var ipv4Err error
+				if provider.IPAddrs.IPv4Addr == "" {
+					ipv4Err = provider.deleteDomainRecord(ctx, prefix, zone, "A")
+				} else {
+					ipv4Err = provider.addDomainRecord(ctx, prefix, zone, "A", provider.IPAddrs.IPv4Addr)
+				}
+
+				if ipv4Err != nil {
+					log.Printf("NEZHA>> Failed to update IPv4 record of domain %s: %v", domain, ipv4Err)
+				} else {
+					log.Printf("NEZHA>> Update IPv4 record of domain %s succeeded", domain)
+					break
+				}
+			}
+		}
+
+		// 独立处理 IPv6 更新或删除
+		if provider.DDNSProfile.EnableIPv6 != nil && *provider.DDNSProfile.EnableIPv6 {
+			for retries := 0; retries < maxRetries; retries++ {
+				log.Printf("NEZHA>> Updating IPv6 record of domain %s: %d/%d", domain, retries+1, maxRetries)
+				var ipv6Err error
+				if provider.IPAddrs.IPv6Addr == "" {
+					ipv6Err = provider.deleteDomainRecord(ctx, prefix, zone, "AAAA")
+				} else {
+					ipv6Err = provider.addDomainRecord(ctx, prefix, zone, "AAAA", provider.IPAddrs.IPv6Addr)
+				}
+
+				if ipv6Err != nil {
+					log.Printf("NEZHA>> Failed to update IPv6 record of domain %s: %v", domain, ipv6Err)
+				} else {
+					log.Printf("NEZHA>> Update IPv6 record of domain %s succeeded", domain)
+					break
+				}
+			}
 		}
 	}
 }
 
-func (provider *Provider) updateDomain(ctx context.Context, domain string) error {
-	var err error
-	provider.prefix, provider.zone, err = provider.splitDomainSOA(ctx, domain)
-	if err != nil {
-		return err
-	}
-
-	// 独立处理 IPv4 更新
-	if *provider.DDNSProfile.EnableIPv4 {
-		if provider.IPAddrs.IPv4Addr == "" {
-			log.Printf("NEZHA>> Skip IPv4 update for domain %s: IPv4 address is empty", domain)
-		} else {
-			if err = provider.addDomainRecord(ctx, "A", provider.IPAddrs.IPv4Addr); err != nil {
-				return err
-			}
-		}
-	}
-
-	// 独立处理 IPv6 更新
-	if *provider.DDNSProfile.EnableIPv6 {
-		if provider.IPAddrs.IPv6Addr == "" {
-			log.Printf("NEZHA>> Skip IPv6 update for domain %s: IPv6 address is empty", domain)
-		} else {
-			if err = provider.addDomainRecord(ctx, "AAAA", provider.IPAddrs.IPv6Addr); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (provider *Provider) addDomainRecord(ctx context.Context, recType, addr string) error {
+func (provider *Provider) addDomainRecord(ctx context.Context, prefix, zone, recType, addr string) error {
 	netipAddr, err := netip.ParseAddr(addr)
 	if err != nil {
 		return fmt.Errorf("parse error: %v", err)
 	}
 
-	_, err = provider.Setter.SetRecords(ctx, provider.zone,
+	_, err = provider.Setter.SetRecords(ctx, zone,
 		[]libdns.Record{
 			libdns.Address{
-				Name: provider.prefix,
+				Name: prefix,
 				IP:   netipAddr,
 				TTL:  time.Minute,
 			},
 		})
 	return err
+}
+
+func (provider *Provider) deleteDomainRecord(ctx context.Context, prefix, zone, recType string) error {
+	deleter, okDeleter := provider.Setter.(libdns.RecordDeleter)
+	if !okDeleter {
+		log.Printf("NEZHA>> DNS provider does not support RecordDeleter, safely skipping deletion for %s", recType)
+		return nil
+	}
+
+	targetRecType := strings.ToUpper(recType)
+	_, err := deleter.DeleteRecords(ctx, zone, []libdns.Record{
+		libdns.RR{
+			Name: prefix,
+			Type: targetRecType,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("deleter.DeleteRecords failed: %w", err)
+	}
+
+	log.Printf("NEZHA>> Successfully deleted %s record for %s.%s", recType, prefix, zone)
+	return nil
 }
 
 func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (prefix string, zone string, err error) {
@@ -103,7 +143,6 @@ func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (pr
 	indexes := dns.Split(domain)
 
 	servers := utils.DNSServers
-
 	customDNSServers, _ := ctx.Value(DNSServerKey{}).([]string)
 	if len(customDNSServers) > 0 {
 		servers = customDNSServers
@@ -119,15 +158,14 @@ func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (pr
 				continue
 			}
 
-			if len(r.Answer) > 0 {
+			if r != nil && len(r.Answer) > 0 {
 				if soa, ok := r.Answer[0].(*dns.SOA); ok {
-					zone := soa.Hdr.Name
-					prefix := libdns.RelativeName(domain, zone)
-					// Convert "@" to empty string for zone apex
-					if prefix == "@" {
-						prefix = ""
+					zoneName := soa.Hdr.Name
+					pfx := libdns.RelativeName(domain, zoneName)
+					if pfx == "@" {
+						pfx = ""
 					}
-					return prefix, zone, nil
+					return pfx, zoneName, nil
 				}
 			}
 		}
