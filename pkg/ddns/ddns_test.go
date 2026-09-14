@@ -25,9 +25,16 @@ func TestSplitDomainSOA(t *testing.T) {
 		m.SetReply(r)
 		if len(r.Question) > 0 {
 			qname := r.Question[0].Name
-			if strings.HasSuffix(qname, "example.co.uk.") || strings.HasSuffix(qname, "example.com.") {
+			var zoneName string
+			if strings.HasSuffix(qname, "example.co.uk.") {
+				zoneName = "example.co.uk."
+			} else if strings.HasSuffix(qname, "example.com.") {
+				zoneName = "example.com."
+			}
+
+			if zoneName != "" {
 				soa := &dns.SOA{
-					Hdr:    dns.RR_Header{Name: qname, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+					Hdr:    dns.RR_Header{Name: zoneName, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
 					Ns:     "ns.example.com.",
 					Mbox:   "admin.example.com.",
 					Serial: 1,
@@ -219,7 +226,7 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	provider := &Provider{
 		DDNSProfile: &model.DDNSProfile{
 			MaxRetries: maxRetries,
-			Domains:    []string{"fail"},
+			Domains:    []string{"example.com"},
 		},
 		IPAddrs: &model.IP{IPv4Addr: "1.1.1.1"},
 		Setter:  &MockSetter{},
