@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/libdns/he"
 	"github.com/libdns/libdns"
 	"github.com/miekg/dns"
 
@@ -115,83 +114,25 @@ func (provider *Provider) addDomainRecord(ctx context.Context, prefix, zone, rec
 	return err
 }
 
-// deleteDomainRecord 用于安全删除指定类型的解析记录
 func (provider *Provider) deleteDomainRecord(ctx context.Context, prefix, zone, recType string) error {
-	targetRecType := strings.ToUpper(recType)
-
-	// 针对 HE 服务商使用标准的 libdns.RR
-	if _, ok := provider.Setter.(*he.Provider); ok {
-		deleter, okDeleter := provider.Setter.(libdns.RecordDeleter)
-		if !okDeleter {
-			return fmt.Errorf("he provider does not implement RecordDeleter")
-		}
-		_, err := deleter.DeleteRecords(ctx, zone, []libdns.Record{
-			libdns.RR{
-				Name: prefix,
-				Type: targetRecType,
-			},
-		})
-		return err
-	}
-
-	// 检查接口
-	getter, okGetter := provider.Setter.(libdns.RecordGetter)
 	deleter, okDeleter := provider.Setter.(libdns.RecordDeleter)
-
-	if !okGetter || !okDeleter {
-		log.Printf("NEZHA>> DNS provider does not support record getting or deletion, safely skipping deletion for %s", recType)
+	if !okDeleter {
+		log.Printf("NEZHA>> DNS provider does not support RecordDeleter, safely skipping deletion for %s", recType)
 		return nil
 	}
 
-	cleanName := func(name string) string {
-		return strings.ToLower(strings.TrimSuffix(name, "."))
-	}
-	cleanPrefix := cleanName(prefix)
-
-	// 获取 DNS 记录（针对标准提供商，如 Cloudflare）
-	allRecords, err := getter.GetRecords(ctx, zone)
-	if err != nil {
-		return fmt.Errorf("failed to get DNS records: %w", err)
-	}
-
-	cleanZone := cleanName(zone)
-	var targetRecords []libdns.Record
-	for _, rec := range allRecords {
-		rr := rec.RR()
-		if strings.ToUpper(rr.Type) != targetRecType {
-			continue
-		}
-
-		relName := libdns.RelativeName(rr.Name, zone)
-		cleanRel := cleanName(relName)
-		cleanRRName := cleanName(rr.Name)
-
-		isApex := cleanRel == "" || cleanRel == "@" || cleanRRName == cleanZone
-
-		var matchedName bool
-		if cleanPrefix == "" {
-			matchedName = isApex
-		} else {
-			matchedName = cleanRel == cleanPrefix || cleanRRName == cleanPrefix
-		}
-
-		if matchedName {
-			targetRecords = append(targetRecords, rec)
-		}
-	}
-
-	// 若未找到对应记录（例如已经成功删除），则直接返回成功
-	if len(targetRecords) == 0 {
-		log.Printf("NEZHA>> No matching %s record found for deletion under zone %s, already clean", recType, zone)
-		return nil
-	}
-
-	_, err = deleter.DeleteRecords(ctx, zone, targetRecords)
+	targetRecType := strings.ToUpper(recType)
+	_, err := deleter.DeleteRecords(ctx, zone, []libdns.Record{
+		libdns.RR{
+			Name: prefix,
+			Type: targetRecType,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("deleter.DeleteRecords failed: %w", err)
 	}
 
-	log.Printf("NEZHA>> Successfully deleted %d matching %s record(s) for %s.%s", len(targetRecords), recType, prefix, zone)
+	log.Printf("NEZHA>> Successfully deleted %s record for %s.%s", recType, prefix, zone)
 	return nil
 }
 
