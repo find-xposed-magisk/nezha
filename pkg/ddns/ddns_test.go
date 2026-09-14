@@ -96,7 +96,7 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	maxRetries := 3
 	provider := &Provider{
 		DDNSProfile: &model.DDNSProfile{
-			MaxRetries: int64(maxRetries),
+			MaxRetries: uint64(maxRetries),
 			Domains:    []string{"notfound.invalid"},
 		},
 		IPAddrs: &model.IP{IPv4Addr: "1.1.1.1"},
