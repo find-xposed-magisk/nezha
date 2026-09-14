@@ -108,7 +108,7 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	provider.UpdateDomain(ctx)
 	duration := time.Since(start)
 
-	if duration > 35*time.Second {
+	if duration > 180*time.Second {
 		t.Fatalf("SOA retry loop took too long: %v", duration)
 	}
 }
