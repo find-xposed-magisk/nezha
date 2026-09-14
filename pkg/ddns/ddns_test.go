@@ -23,6 +23,7 @@ func TestSplitDomainSOA(t *testing.T) {
 	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
 		m := new(dns.Msg)
 		m.SetReply(r)
+		m.Authoritative = true
 		if len(r.Question) > 0 {
 			qname := r.Question[0].Name
 			var zoneName string
@@ -40,6 +41,7 @@ func TestSplitDomainSOA(t *testing.T) {
 					Serial: 1,
 				}
 				m.Answer = append(m.Answer, soa)
+				m.Ns = append(m.Ns, soa)
 			}
 		}
 		_ = w.WriteMsg(m)
@@ -154,11 +156,16 @@ func TestIndependentDualStackProcessing(t *testing.T) {
 	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
 		m := new(dns.Msg)
 		m.SetReply(r)
+		m.Authoritative = true
 		if len(r.Question) > 0 {
 			soa := &dns.SOA{
-				Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+				Hdr:    dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+				Ns:     "ns.example.com.",
+				Mbox:   "admin.example.com.",
+				Serial: 1,
 			}
 			m.Answer = append(m.Answer, soa)
+			m.Ns = append(m.Ns, soa)
 		}
 		_ = w.WriteMsg(m)
 	})
@@ -226,7 +233,7 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	provider := &Provider{
 		DDNSProfile: &model.DDNSProfile{
 			MaxRetries: maxRetries,
-			Domains:    []string{"sub.example.com"},
+			Domains:    []string{"example.com"},
 			EnableIPv4: &[]bool{true}[0],
 			EnableIPv6: &[]bool{false}[0],
 		},
@@ -250,7 +257,8 @@ func TestGenericRecordDeleterContract(t *testing.T) {
 		Setter:      mockSetter,
 	}
 
-	err := provider.deleteDomainRecord(context.Background(), "sub", "example.com", "A")
+	ctx := context.Background()
+	err := provider.deleteDomainRecord(ctx, "sub", "example.com", "A")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
