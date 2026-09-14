@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/libdns/libdns"
@@ -208,10 +209,10 @@ func TestIndependentDualStackProcessing(t *testing.T) {
 }
 
 func TestTransientSOAFailureAndRetry(t *testing.T) {
-	attempts := 0
+	var attempts int64
 	handler := dns.NewServeMux()
 	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
-		attempts++
+		atomic.AddInt64(&attempts, 1)
 		m := new(dns.Msg)
 		m.SetReply(r)
 		_ = w.WriteMsg(m)
@@ -244,9 +245,10 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DNSServerKey{}, []string{pc.LocalAddr().String()})
 	provider.UpdateDomain(ctx)
 
-	expectedAttempts := int(maxRetries) * 2
-	if attempts != expectedAttempts {
-		t.Fatalf("expected exact attempt count of %d, got %d", expectedAttempts, attempts)
+	actualAttempts := atomic.LoadInt64(&attempts)
+	expectedAttempts := int64(maxRetries) * 2
+	if actualAttempts != expectedAttempts {
+		t.Fatalf("expected exact attempt count of %d, got %d", expectedAttempts, actualAttempts)
 	}
 }
 
