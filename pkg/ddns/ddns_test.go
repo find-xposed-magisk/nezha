@@ -226,7 +226,9 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	provider := &Provider{
 		DDNSProfile: &model.DDNSProfile{
 			MaxRetries: maxRetries,
-			Domains:    []string{"example.com"},
+			Domains:    []string{"sub.example.com"},
+			EnableIPv4: &[]bool{true}[0],
+			EnableIPv6: &[]bool{false}[0],
 		},
 		IPAddrs: &model.IP{IPv4Addr: "1.1.1.1"},
 		Setter:  &MockSetter{},
