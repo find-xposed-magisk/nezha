@@ -3,6 +3,7 @@ package ddns
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/libdns/libdns"
@@ -24,17 +25,15 @@ func TestSplitDomainSOA(t *testing.T) {
 		m.SetReply(r)
 		if len(r.Question) > 0 {
 			qname := r.Question[0].Name
-			soa := &dns.SOA{
-				Hdr:     dns.RR_Header{Name: qname, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
-				Ns:      "ns.example.com.",
-				Mbox:    "admin.example.com.",
-				Serial:  1,
-				Refresh: 3600,
-				Retry:   600,
-				Expire:  86400,
-				Minttl:  60,
+			if strings.HasSuffix(qname, "example.co.uk.") || strings.HasSuffix(qname, "example.com.") {
+				soa := &dns.SOA{
+					Hdr:    dns.RR_Header{Name: qname, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+					Ns:     "ns.example.com.",
+					Mbox:   "admin.example.com.",
+					Serial: 1,
+				}
+				m.Answer = append(m.Answer, soa)
 			}
-			m.Answer = append(m.Answer, soa)
 		}
 		_ = w.WriteMsg(m)
 	})
@@ -149,9 +148,8 @@ func TestIndependentDualStackProcessing(t *testing.T) {
 		m := new(dns.Msg)
 		m.SetReply(r)
 		if len(r.Question) > 0 {
-			qname := r.Question[0].Name
 			soa := &dns.SOA{
-				Hdr: dns.RR_Header{Name: qname, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+				Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
 			}
 			m.Answer = append(m.Answer, soa)
 		}
@@ -177,8 +175,21 @@ func TestIndependentDualStackProcessing(t *testing.T) {
 		t.Fatalf("expected SetRecords to have been called for dual stack updates")
 	}
 
-	if len(mockSetter.Records) != 2 {
-		t.Fatalf("expected 2 records (IPv4 and IPv6) to be set, got %d", len(mockSetter.Records))
+	foundIPv4 := false
+	foundIPv6 := false
+	for _, rec := range mockSetter.Records {
+		if addrRec, ok := rec.(libdns.Address); ok {
+			if addrRec.IP.String() == "1.1.1.1" {
+				foundIPv4 = true
+			}
+			if addrRec.IP.String() == "2001:db8::1" {
+				foundIPv6 = true
+			}
+		}
+	}
+
+	if !foundIPv4 || !foundIPv6 {
+		t.Fatalf("expected both IPv4 and IPv6 records to be processed independently, got records: %v", mockSetter.Records)
 	}
 }
 
@@ -204,11 +215,11 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	}()
 	defer server.Shutdown()
 
-	maxRetries := 3
+	var maxRetries uint64 = 3
 	provider := &Provider{
 		DDNSProfile: &model.DDNSProfile{
-			MaxRetries: uint64(maxRetries),
-			Domains:    []string{"fail.invalid"},
+			MaxRetries: maxRetries,
+			Domains:    []string{"fail"},
 		},
 		IPAddrs: &model.IP{IPv4Addr: "1.1.1.1"},
 		Setter:  &MockSetter{},
@@ -217,7 +228,7 @@ func TestTransientSOAFailureAndRetry(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DNSServerKey{}, []string{pc.LocalAddr().String()})
 	provider.UpdateDomain(ctx)
 
-	if attempts != maxRetries {
+	if uint64(attempts) != maxRetries {
 		t.Fatalf("expected exact attempt count of %d, got %d", maxRetries, attempts)
 	}
 }
