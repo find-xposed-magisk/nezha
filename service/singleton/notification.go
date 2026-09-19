@@ -81,20 +81,29 @@ func NewNotificationClass() *NotificationClass {
 }
 
 func (c *NotificationClass) Update(n *model.Notification) {
-	c.listMu.Lock()
+	func() {
+		c.listMu.Lock()
+		defer c.listMu.Unlock()
 
-	_, ok := c.list[n.ID]
-	c.list[n.ID] = n
-
-	if ok {
-		if gids, ok := c.idToGroupList[n.ID]; ok {
-			for gid := range gids {
-				c.groupToIDList[gid][n.ID] = n
-			}
+		_, ok := c.list[n.ID]
+		c.list[n.ID] = n
+		if !ok {
+			return
 		}
-	}
 
-	c.listMu.Unlock()
+		gids := c.idToGroupList[n.ID]
+		for gid := range gids {
+			group, exists := c.groupToIDList[gid]
+			if !exists {
+				delete(gids, gid)
+				continue
+			}
+			group[n.ID] = n
+		}
+		if len(gids) == 0 {
+			delete(c.idToGroupList, n.ID)
+		}
+	}()
 	c.sortList()
 }
 
@@ -102,71 +111,69 @@ func (c *NotificationClass) UpdateGroup(ng *model.NotificationGroup, ngn []uint6
 	c.groupMu.Lock()
 	defer c.groupMu.Unlock()
 
-	_, ok := c.groupList[ng.ID]
 	c.groupList[ng.ID] = ng.Name
 
 	c.listMu.Lock()
 	defer c.listMu.Unlock()
-	if !ok {
-		c.groupToIDList[ng.ID] = make(map[uint64]*model.Notification, len(ngn))
-		for _, n := range ngn {
-			if c.idToGroupList[n] == nil {
-				c.idToGroupList[n] = make(map[uint64]struct{})
-			}
-			c.idToGroupList[n][ng.ID] = struct{}{}
-			c.groupToIDList[ng.ID][n] = c.list[n]
-		}
-	} else {
-		oldList := make(map[uint64]struct{})
-		for nid := range c.groupToIDList[ng.ID] {
-			oldList[nid] = struct{}{}
-		}
 
-		c.groupToIDList[ng.ID] = make(map[uint64]*model.Notification)
-		for _, nid := range ngn {
-			c.groupToIDList[ng.ID][nid] = c.list[nid]
-			if c.idToGroupList[nid] == nil {
-				c.idToGroupList[nid] = make(map[uint64]struct{})
-			}
-			c.idToGroupList[nid][ng.ID] = struct{}{}
+	oldList := c.groupToIDList[ng.ID]
+	newList := make(map[uint64]*model.Notification, len(ngn))
+	for _, nid := range ngn {
+		n, ok := c.list[nid]
+		if !ok {
+			continue
 		}
+		newList[nid] = n
+		if c.idToGroupList[nid] == nil {
+			c.idToGroupList[nid] = make(map[uint64]struct{})
+		}
+		c.idToGroupList[nid][ng.ID] = struct{}{}
+	}
 
-		for oldID := range oldList {
-			if _, ok := c.groupToIDList[ng.ID][oldID]; !ok {
-				delete(c.groupToIDList[oldID], ng.ID)
-				if len(c.idToGroupList[oldID]) == 0 {
-					delete(c.idToGroupList, oldID)
-				}
-			}
+	for oldID := range oldList {
+		if _, ok := newList[oldID]; ok {
+			continue
+		}
+		delete(c.idToGroupList[oldID], ng.ID)
+		if len(c.idToGroupList[oldID]) == 0 {
+			delete(c.idToGroupList, oldID)
 		}
 	}
+	c.groupToIDList[ng.ID] = newList
 }
 
 func (c *NotificationClass) Delete(idList []uint64) {
-	c.listMu.Lock()
+	func() {
+		c.listMu.Lock()
+		defer c.listMu.Unlock()
 
-	for _, id := range idList {
-		delete(c.list, id)
-		// 如果绑定了通知组才删除
-		if gids, ok := c.idToGroupList[id]; ok {
-			for gid := range gids {
-				delete(c.groupToIDList[gid], id)
+		for _, id := range idList {
+			delete(c.list, id)
+			// 如果绑定了通知组才删除
+			if gids, ok := c.idToGroupList[id]; ok {
+				for gid := range gids {
+					delete(c.groupToIDList[gid], id)
+				}
 				delete(c.idToGroupList, id)
 			}
 		}
-	}
-
-	c.listMu.Unlock()
+	}()
 	c.sortList()
 }
 
 func (c *NotificationClass) DeleteGroup(gids []uint64) {
-	c.listMu.Lock()
-	defer c.listMu.Unlock()
 	c.groupMu.Lock()
 	defer c.groupMu.Unlock()
+	c.listMu.Lock()
+	defer c.listMu.Unlock()
 
 	for _, gid := range gids {
+		for nid := range c.groupToIDList[gid] {
+			delete(c.idToGroupList[nid], gid)
+			if len(c.idToGroupList[nid]) == 0 {
+				delete(c.idToGroupList, nid)
+			}
+		}
 		delete(c.groupList, gid)
 		delete(c.groupToIDList, gid)
 	}
@@ -234,13 +241,19 @@ func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc st
 			return
 		}
 	}
-	// 向该通知方式组的所有通知方式发出通知
+	// Copy the group under the lock. Webhook delivery can take minutes and must
+	// not block notification or notification-group updates while it is in flight.
 	c.listMu.RLock()
-	defer c.listMu.RUnlock()
+	notifications := make([]*model.Notification, 0, len(c.groupToIDList[notificationGroupID]))
 	for _, n := range c.groupToIDList[notificationGroupID] {
+		notifications = append(notifications, n)
+	}
+	c.listMu.RUnlock()
+
+	for _, n := range notifications {
 		log.Printf("NEZHA>> Try to notify %s", n.Name)
 	}
-	for _, n := range c.groupToIDList[notificationGroupID] {
+	for _, n := range notifications {
 		ns := model.NotificationServerBundle{
 			Notification: n,
 			Server:       nil,

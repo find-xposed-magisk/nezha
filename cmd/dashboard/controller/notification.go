@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"net/http"
 	"slices"
 	"strconv"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+const notificationBatchDeleteMaxBodyBytes = 1 << 20
 
 // List notification
 // @Summary List notification
@@ -174,6 +177,9 @@ func updateNotification(c *gin.Context) (any, error) {
 // @Router /batch-delete/notification [post]
 func batchDeleteNotification(c *gin.Context) (any, error) {
 	var n []uint64
+	if c.Request != nil && c.Request.Body != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, notificationBatchDeleteMaxBodyBytes)
+	}
 	if err := c.ShouldBindJSON(&n); err != nil {
 		return nil, err
 	}
