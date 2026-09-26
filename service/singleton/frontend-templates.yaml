@@ -2,24 +2,20 @@
   name: "OfficialAdmin"
   repository: "https://github.com/nezhahq/admin-frontend"
   author: "nezhahq"
-  version: "v2.3.6"
+  version: "v2.3.7"
   is_admin: true
   is_official: true
 - path: "user-dist"
   name: "Official"
   repository: "https://github.com/hamster1963/nezha-dash-v2"
   author: "hamster1963"
-  version: "v2.4.2"
+  version: "v2.4.3"
   is_official: true
 - path: "nezha-pixel-dist"
   name: "Nezha-Pixel"
   repository: "https://github.com/karllao/nezha-pixel"
   author: "karllao"
   version: "v1.6.0"
-# Third-party user themes consume the opaque Server.PublicNote field. Theme
-# maintainers must validate URL schemes (including after decoding) before using
-# values such as customData.orderLink in href or window.open; the Dashboard
-# backend and admin frontend do not execute those fields.
 - path: "nazhua-dist"
   name: "Nazhua"
   repository: "https://github.com/hi2shark/nazhua"
