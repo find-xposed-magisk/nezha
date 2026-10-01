@@ -34,6 +34,8 @@ func listDDNS(c *gin.Context) ([]*model.DDNSProfile, error) {
 	// 不影响 singleton 内原始数据。
 	for _, p := range ddnsProfiles {
 		p.AccessSecret = ""
+		p.WebhookURL = ""
+		p.WebhookRequestBody = ""
 		p.WebhookHeaders = ""
 	}
 
@@ -144,10 +146,8 @@ func updateDDNS(c *gin.Context) (any, error) {
 	p.Provider = df.Provider
 	p.Domains = df.Domains
 	p.AccessID = df.AccessID
-	p.WebhookURL = df.WebhookURL
 	p.WebhookMethod = df.WebhookMethod
 	p.WebhookRequestType = df.WebhookRequestType
-	p.WebhookRequestBody = df.WebhookRequestBody
 
 	// 凭据在列表接口已脱敏，前端无法回填；空值视为"不修改"，保留旧值避免误清空。
 	if df.AccessSecret != "" {
@@ -155,6 +155,12 @@ func updateDDNS(c *gin.Context) (any, error) {
 	}
 	if df.WebhookHeaders != "" {
 		p.WebhookHeaders = df.WebhookHeaders
+	}
+	if df.WebhookURL != "" {
+		p.WebhookURL = df.WebhookURL
+	}
+	if df.WebhookRequestBody != "" {
+		p.WebhookRequestBody = df.WebhookRequestBody
 	}
 
 	for n, domain := range p.Domains {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,6 +91,37 @@ var (
 	transferSecretMu  sync.Mutex
 	transferSecretVal string
 )
+
+var errMCPTransferHostNotConfigured = errors.New("MCP transfer URL host is not an operator-declared dashboard host")
+
+// mcpTransferURLBase never reflects an untrusted request Host into a bearer
+// transfer URL. DashboardHost is the canonical public authority; deployments
+// that intentionally serve multiple names must declare them as reserved hosts.
+func mcpTransferURLBase(c *gin.Context) (string, error) {
+	if c == nil || c.Request == nil || singleton.Conf == nil {
+		return "", errMCPTransferHostNotConfigured
+	}
+
+	requestHost := strings.TrimSpace(c.Request.Host)
+	host := strings.TrimSpace(singleton.Conf.DashboardHost)
+	if host == "" {
+		if !singleton.IsReservedDashboardHost(requestHost) {
+			return "", errMCPTransferHostNotConfigured
+		}
+		host = requestHost
+	}
+
+	parsed, err := url.Parse("//" + host)
+	if err != nil || parsed.Host == "" || parsed.Host != host || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errMCPTransferHostNotConfigured
+	}
+
+	scheme := "https"
+	if c.Request.TLS == nil && c.Request.Header.Get("X-Forwarded-Proto") != "https" {
+		scheme = "http"
+	}
+	return scheme + "://" + host, nil
+}
 
 // transferHMACSecret 返回进程内随机生成的 HMAC key。
 // 这是有意设计：transferEntries 本身也只活在内存 sync.Map 里，dashboard
@@ -315,6 +347,10 @@ func mintTransferTool(c *gin.Context, serverID uint64, path string, ttlSeconds i
 	if err := validateTransferPath(path); err != nil {
 		return nil, err
 	}
+	baseURL, err := mcpTransferURLBase(c)
+	if err != nil {
+		return nil, err
+	}
 	ttl := time.Duration(ttlSeconds) * time.Second
 	if ttl <= 0 {
 		ttl = transferTokenTTLDefault
@@ -348,14 +384,9 @@ func mintTransferTool(c *gin.Context, serverID uint64, path string, ttlSeconds i
 	if err != nil {
 		return nil, err
 	}
-	scheme := "https"
-	if c.Request.TLS == nil && c.Request.Header.Get("X-Forwarded-Proto") != "https" {
-		scheme = "http"
-	}
-	host := c.Request.Host
-	url := fmt.Sprintf("%s://%s/mcp/%s/%s", scheme, host, dir, t)
+	transferURL := fmt.Sprintf("%s/mcp/%s/%s", baseURL, dir, t)
 	return map[string]any{
-		"url":        url,
+		"url":        transferURL,
 		"method":     map[transferDirection]string{transferDirDownload: "GET", transferDirUpload: "POST"}[dir],
 		"expires_at": entry.ExpiresAt,
 	}, nil

@@ -236,10 +236,9 @@ func getServerConfig(c *gin.Context) (string, error) {
 	}
 
 	s, ok := singleton.ServerShared.Get(id)
-	if !ok {
-		return "", nil
-	}
-	if !s.HasPermission(c) {
+	// Foreign and unknown IDs deliberately share one response so sequential
+	// server IDs cannot be enumerated across tenants.
+	if !ok || !s.HasPermission(c) || !patAllowsServer(c, id) {
 		return "", singleton.Localizer.ErrorT("permission denied")
 	}
 	if s.GetTaskStream() == nil {
@@ -293,16 +292,16 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	slist := singleton.ServerShared.GetList()
 	servers := make([]*model.Server, 0, len(configForm.Servers))
 	for _, sid := range configForm.Servers {
-		if s, ok := slist[sid]; ok {
-			if !s.HasPermission(c) {
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-			if s.GetTaskStream() == nil {
-				resp.Offline = append(resp.Offline, s.ID)
-				continue
-			}
-			servers = append(servers, s)
+		s, ok := slist[sid]
+		// Match getServerConfig: do not reveal whether a denied ID exists.
+		if !ok || !s.HasPermission(c) || !patAllowsServer(c, sid) {
+			return nil, singleton.Localizer.ErrorT("permission denied")
 		}
+		if s.GetTaskStream() == nil {
+			resp.Offline = append(resp.Offline, s.ID)
+			continue
+		}
+		servers = append(servers, s)
 	}
 
 	var wg sync.WaitGroup

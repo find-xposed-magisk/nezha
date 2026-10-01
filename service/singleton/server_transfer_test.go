@@ -455,7 +455,8 @@ func TestServerTransferBroadcastReachesSubscribers(t *testing.T) {
 	defer cleanup()
 	seedServerForTransfer(t, 1, 100)
 
-	id, ch := c.Subscribe()
+	id, ch, err := c.Subscribe(100)
+	require.NoError(t, err)
 	defer c.Unsubscribe(id)
 
 	tr := initiateAndRegister(t, c, 1, 100, 200, 1)
@@ -469,13 +470,64 @@ func TestServerTransferBroadcastReachesSubscribers(t *testing.T) {
 		t.Fatal("expected Pending broadcast within 1s")
 	}
 
-	_, _, err := markPendingVerified(t, c, 1)
+	_, _, err = markPendingVerified(t, c, 1)
 	require.NoError(t, err)
 	select {
 	case ev := <-ch:
 		require.Equal(t, model.ServerTransferStatusVerified, ev.Status)
 	case <-time.After(time.Second):
 		t.Fatal("expected Verified broadcast within 1s")
+	}
+}
+
+func TestServerTransferSubscribeEnforcesPerUserLimitAndReleasesQuota(t *testing.T) {
+	c, cleanup := setupTransferFixture(t)
+	defer cleanup()
+
+	ids := make([]uint64, 0, maxServerTransferSubscribersPerUser)
+	for range maxServerTransferSubscribersPerUser {
+		id, ch, err := c.Subscribe(100)
+		require.NoError(t, err)
+		require.NotNil(t, ch)
+		ids = append(ids, id)
+	}
+
+	_, _, err := c.Subscribe(100)
+	require.ErrorIs(t, err, errTooManyServerTransferSubscribersForUser)
+
+	otherID, _, err := c.Subscribe(200)
+	require.NoError(t, err, "one user's quota must not block another user")
+	c.Unsubscribe(otherID)
+
+	c.Unsubscribe(ids[0])
+	replacementID, _, err := c.Subscribe(100)
+	require.NoError(t, err, "disconnecting must release the user's quota")
+	c.Unsubscribe(replacementID)
+	for _, id := range ids[1:] {
+		c.Unsubscribe(id)
+	}
+}
+
+func TestServerTransferSubscribeEnforcesGlobalLimit(t *testing.T) {
+	c, cleanup := setupTransferFixture(t)
+	defer cleanup()
+
+	ids := make([]uint64, 0, maxServerTransferSubscribersGlobal)
+	for userID := uint64(1); len(ids) < maxServerTransferSubscribersGlobal; userID++ {
+		for range maxServerTransferSubscribersPerUser {
+			if len(ids) == maxServerTransferSubscribersGlobal {
+				break
+			}
+			id, _, err := c.Subscribe(userID)
+			require.NoError(t, err)
+			ids = append(ids, id)
+		}
+	}
+
+	_, _, err := c.Subscribe(999999)
+	require.ErrorIs(t, err, errTooManyServerTransferSubscribersGlobal)
+	for _, id := range ids {
+		c.Unsubscribe(id)
 	}
 }
 
@@ -1626,7 +1678,8 @@ func TestOnServersDeletedTerminatesPendingTransfersAndClearsIndexes(t *testing.T
 	tr := initiateAndRegister(t, c, 1, 100, 200, 1)
 	require.True(t, c.HasPending(1))
 
-	subID, ch := c.Subscribe()
+	subID, ch, err := c.Subscribe(100)
+	require.NoError(t, err)
 	defer c.Unsubscribe(subID)
 
 	require.NoError(t, DB.Unscoped().Delete(&model.Server{}, tr.ServerID).Error)

@@ -109,12 +109,14 @@ func TestListDDNS_RedactsCredentials(t *testing.T) {
 	defer setupTenancyTest(t)()
 
 	p := model.DDNSProfile{
-		Common:         model.Common{UserID: 10},
-		Name:           "cf",
-		Provider:       "cloudflare",
-		AccessID:       "id",
-		AccessSecret:   "super-secret-token",
-		WebhookHeaders: `{"Authorization":"Bearer xxx"}`,
+		Common:             model.Common{UserID: 10},
+		Name:               "cf",
+		Provider:           "cloudflare",
+		AccessID:           "id",
+		AccessSecret:       "super-secret-token",
+		WebhookURL:         "https://ddns.example/update?token=embedded-secret",
+		WebhookRequestBody: `{"token":"embedded-secret"}`,
+		WebhookHeaders:     `{"Authorization":"Bearer xxx"}`,
 	}
 	require.NoError(t, singleton.DB.Create(&p).Error)
 	singleton.DDNSShared.InsertForTest(&p)
@@ -124,12 +126,18 @@ func TestListDDNS_RedactsCredentials(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Empty(t, out[0].AccessSecret, "access_secret must be redacted in list response")
+	require.Empty(t, out[0].WebhookURL, "webhook_url must be redacted in list response")
+	require.Empty(t, out[0].WebhookRequestBody, "webhook_request_body must be redacted in list response")
 	require.Empty(t, out[0].WebhookHeaders, "webhook_headers must be redacted in list response")
 	require.Equal(t, "id", out[0].AccessID, "non-secret fields must be preserved")
 
 	var stored model.DDNSProfile
 	require.NoError(t, singleton.DB.First(&stored, p.ID).Error)
 	require.Equal(t, "super-secret-token", stored.AccessSecret, "redaction must not mutate stored data")
+	require.Equal(t, "https://ddns.example/update?token=embedded-secret", stored.WebhookURL,
+		"redaction must not mutate stored webhook URL")
+	require.Equal(t, `{"token":"embedded-secret"}`, stored.WebhookRequestBody,
+		"redaction must not mutate stored webhook body")
 }
 
 func TestListNotification_RedactsCredentials(t *testing.T) {
@@ -164,14 +172,15 @@ func TestUpdateDDNS_EmptySecretPreservesStored(t *testing.T) {
 	defer setupTenancyTest(t)()
 
 	existing := model.DDNSProfile{
-		Common:         model.Common{UserID: 10},
-		Name:           "cf",
-		Provider:       "webhook",
-		AccessID:       "id",
-		AccessSecret:   "keep-me",
-		WebhookURL:     "http://127.0.0.1/",
-		WebhookMethod:  1,
-		WebhookHeaders: `{"X-Token":"keep-header"}`,
+		Common:             model.Common{UserID: 10},
+		Name:               "cf",
+		Provider:           "webhook",
+		AccessID:           "id",
+		AccessSecret:       "keep-me",
+		WebhookURL:         "http://127.0.0.1/",
+		WebhookRequestBody: `{"X-Token":"keep-body"}`,
+		WebhookMethod:      1,
+		WebhookHeaders:     `{"X-Token":"keep-header"}`,
 	}
 	require.NoError(t, singleton.DB.Create(&existing).Error)
 	singleton.DDNSShared.InsertForTest(&existing)
@@ -181,10 +190,11 @@ func TestUpdateDDNS_EmptySecretPreservesStored(t *testing.T) {
 		"provider":             "webhook",
 		"access_id":            "id",
 		"access_secret":        "",
-		"webhook_url":          "http://127.0.0.1/",
+		"webhook_url":          "",
 		"webhook_method":       1,
 		"webhook_request_type": 1,
 		"webhook_headers":      "",
+		"webhook_request_body": "",
 		"max_retries":          3,
 	})
 	c.Params = gin.Params{{Key: "id", Value: itoa(existing.ID)}}
@@ -197,6 +207,10 @@ func TestUpdateDDNS_EmptySecretPreservesStored(t *testing.T) {
 	require.Equal(t, "keep-me", after.AccessSecret, "empty submitted secret must preserve stored value")
 	require.Equal(t, `{"X-Token":"keep-header"}`, after.WebhookHeaders,
 		"empty submitted headers must preserve stored value")
+	require.Equal(t, "http://127.0.0.1/", after.WebhookURL,
+		"empty submitted webhook URL must preserve stored value")
+	require.Equal(t, `{"X-Token":"keep-body"}`, after.WebhookRequestBody,
+		"empty submitted webhook body must preserve stored value")
 }
 
 func TestUpdateDDNS_NonEmptySecretOverwrites(t *testing.T) {

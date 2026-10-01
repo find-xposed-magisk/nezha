@@ -39,7 +39,12 @@ func setupMCPTest(t *testing.T) (func(), uint64) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.MCPAuditLog{}, &model.Server{}, &model.WAF{}))
 	singleton.DB = db
-	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{JWTTimeout: 1}}
+	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{
+		JWTTimeout: 1,
+		ConfigDashboard: model.ConfigDashboard{
+			DashboardHost: "example.com",
+		},
+	}}
 	singleton.Conf.SetMCPEnabled(true)
 
 	user := model.User{Common: model.Common{ID: 100}, Username: "alice", Role: model.RoleMember}

@@ -15,6 +15,19 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
+// The official file-manager client uploads in 1 MiB WebSocket messages. Cap
+// each complete message at that protocol boundary so gorilla/websocket cannot
+// buffer an attacker-sized frame before the IO stream relay sees it.
+const fileManagerWebSocketInputLimit int64 = 1024 * 1024
+
+type websocketReadLimiter interface {
+	SetReadLimit(limit int64)
+}
+
+func limitFileManagerWebSocketInput(conn websocketReadLimiter) {
+	conn.SetReadLimit(fileManagerWebSocketInputLimit)
+}
+
 // Create FM session
 // @Summary Create FM session
 // @Description Create an "attached" FM. It is advised to only call this within a terminal session.
@@ -99,6 +112,7 @@ func fmStream(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, newWsError("%v", err)
 	}
+	limitFileManagerWebSocketInput(wsConn)
 	conn := websocketx.NewConn(wsConn)
 	pingTransport := newWebsocketPingTransport(conn, wsConn.Close)
 	stopPing := startWebsocketPingTicker(c.Request.Context(), time.Second*10, pingTransport)

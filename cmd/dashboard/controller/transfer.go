@@ -171,6 +171,12 @@ const transferStreamPingInterval = 30 * time.Second
 // @Success 200 {object} model.ServerTransfer
 // @Router /ws/transfer [get]
 func transferStream(c *gin.Context) (any, error) {
+	subID, ch, err := singleton.ServerTransferShared.Subscribe(getUid(c))
+	if err != nil {
+		return nil, err
+	}
+	defer singleton.ServerTransferShared.Unsubscribe(subID)
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return nil, newWsError("%v", err)
@@ -179,9 +185,6 @@ func transferStream(c *gin.Context) (any, error) {
 
 	deregisterPAT := registerPATConnection(c, func() { _ = conn.Close() })
 	defer deregisterPAT()
-
-	subID, ch := singleton.ServerTransferShared.Subscribe()
-	defer singleton.ServerTransferShared.Unsubscribe(subID)
 
 	// Pings keep the socket warm even when the broker is quiet. Without this
 	// a long idle period followed by a transfer event would race against
