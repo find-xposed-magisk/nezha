@@ -23,6 +23,7 @@ import (
 
 func TestServeNATAgentCompatPublishesExactStreamAfterRequestTransfer(t *testing.T) {
 	fixture := newServeNATFixture(t)
+	installNATCredentialTestGate(t)
 	capability, err := fixture.handler.RegisterAgentCompatIOStreamCapability(context.Background(), serviceRPC.AgentCompatCapabilityRegistration{
 		Owner:               serviceRPC.AgentCompatCapabilityOwner{PATID: 1, UserID: 2},
 		Purpose:             serviceRPC.AgentCompatCapabilityNAT,
@@ -44,7 +45,7 @@ func TestServeNATAgentCompatPublishesExactStreamAfterRequestTransfer(t *testing.
 		Body:   io.NopCloser(strings.NewReader("payload")),
 	}
 	request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, capability.String())
-	request.Header.Set("Authorization", "Bearer deterministic-secret")
+	request.Header.Set("Authorization", natTestForeignJWT)
 	request.Header.Set("X-Ordinary-NAT", "ordinary")
 	fixture.taskStream.onSend = func(task *proto.Task) error {
 		var nat model.TaskNAT
@@ -106,8 +107,62 @@ func TestServeNATAgentCompatPublishesExactStreamAfterRequestTransfer(t *testing.
 		require.Contains(t, forwarded, expected)
 	}
 	require.NotContains(t, forwarded, agentcompatcontract.IOStreamCapabilityHeader)
-	require.NotContains(t, forwarded, "Authorization:")
-	require.NotContains(t, forwarded, "deterministic-secret")
+	// Foreign credentials are ordinary request data for the NAT backend and
+	// must survive the transfer; dashboard-issued values are stripped before
+	// any byte leaves the dashboard.
+	require.Contains(t, forwarded, "Authorization: "+natTestForeignJWT)
+}
+
+func TestServeNATAgentCompatDoesNotForwardDashboardCredentials(t *testing.T) {
+	fixture := newServeNATFixture(t)
+	installNATCredentialTestGate(t)
+	capability, err := fixture.handler.RegisterAgentCompatIOStreamCapability(context.Background(), serviceRPC.AgentCompatCapabilityRegistration{
+		Owner:               serviceRPC.AgentCompatCapabilityOwner{PATID: 1, UserID: 2},
+		Purpose:             serviceRPC.AgentCompatCapabilityNAT,
+		TargetServerID:      fixture.server.ID,
+		ResourceID:          91,
+		ServerAccessAllowed: true,
+	})
+	require.NoError(t, err)
+	connection := newServeNATConn()
+	writer := &serveNATResponseWriter{conn: connection}
+	agent := &serveNATAgent{readErr: io.EOF, writeDone: make(chan struct{})}
+	request := &http.Request{
+		Method: http.MethodPost,
+		URL:    &url.URL{Scheme: "http", Host: "example.test", Path: "/nat"},
+		Header: make(http.Header),
+		Body:   io.NopCloser(strings.NewReader("payload")),
+	}
+	request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, capability.String())
+	request.Header.Set("Authorization", natTestDashboardJWT)
+	fixture.taskStream.onSend = func(task *proto.Task) error {
+		var nat model.TaskNAT
+		if err := json.Unmarshal([]byte(task.Data), &nat); err != nil {
+			return err
+		}
+		return fixture.handler.AgentConnected(nat.StreamID, agent)
+	}
+	done := make(chan struct{})
+	go func() {
+		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91}, ServerID: fixture.server.ID, Host: "target.example"})
+		close(done)
+	}()
+	select {
+	case <-agent.writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("agent did not receive the transferred NAT request")
+	}
+	require.NoError(t, connection.Close())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ServeNAT did not complete")
+	}
+	forwarded := strings.ToLower(string(agent.writtenBytes()))
+	require.NotContains(t, forwarded, "authorization:")
+	for _, dashboardCredential := range []string{natTestDashboardJWT, natTestDashboardExpiredJWT, natTestDashboardAPIToken} {
+		require.NotContains(t, forwarded, strings.ToLower(dashboardCredential))
+	}
 }
 
 type orderedNATAgent struct {

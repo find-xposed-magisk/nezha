@@ -80,7 +80,14 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		return
 	}
 
-	// Authorization authenticates Dashboard access before NAT ingress; it must not become an origin credential for the configured NAT backend.
+	// Credential invariant at NAT ingress: credentials issued by this
+	// dashboard — the panel-signed JWT (verified by signature only, expiry
+	// deliberately ignored) and the panel API token — must never become origin
+	// credentials for the configured NAT backend. prepareNATCapability has
+	// already stripped every Authorization value IsDashboardCredential
+	// classified as dashboard-issued; whatever remains is either absent or a
+	// foreign credential, which is forwarded untouched because the NAT backend
+	// may authenticate with credentials of its own.
 	wWrapped, err := utils.NewRequestWrapper(r, w)
 	if err != nil {
 		return

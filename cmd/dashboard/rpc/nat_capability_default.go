@@ -18,7 +18,11 @@ type natCapabilityLease struct {
 }
 
 func prepareNATCapability(request *http.Request, _ *model.NAT) (natCapabilityLease, error) {
-	request.Header.Del("Authorization")
+	// The default build has no capability protocol: every request takes the
+	// legacy NAT path, so any dashboard-issued Authorization value (panel JWT
+	// or panel PAT) is stripped before the request is tunneled to the agent.
+	// Foreign Authorization values are ordinary request data and stay put.
+	stripDashboardCredential(request)
 	return natCapabilityLease{}, nil
 }
 
