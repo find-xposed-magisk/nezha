@@ -235,10 +235,10 @@ func main() {
 // TokenLookup accepts — the Authorization header, the ?token= query parameter
 // and the nz-jwt cookie — before tunneling a request to the agent, and
 // forwards foreign values untouched. ServeWeb built the JWT parser the
-// classifiers reuse, so the gate is wired right after it and before any
+// classifier reuses, so the gate is wired right after it and before any
 // listener starts serving.
 func wireNATDashboardCredentialGate() {
-	rpc.SetNATDashboardCredentialGate(controller.IsDashboardCredential, controller.IsDashboardCredentialValue)
+	rpc.SetNATDashboardCredentialGate(controller.ClassifyDashboardCredentialValues)
 }
 
 func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.Handler {

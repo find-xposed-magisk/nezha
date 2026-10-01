@@ -1,9 +1,11 @@
 package rpc
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 // Channel names of the panel's own TokenLookup (controller/jwt.go
@@ -14,37 +16,42 @@ import (
 const (
 	natDashboardJWTCookieName     = "nz-jwt"
 	natDashboardJWTQueryParameter = "token"
+	// Keep credential classification work constant even when an unauthenticated
+	// NAT request contains thousands of token parameters or cookies. Values
+	// beyond this per-request budget fail closed and are stripped.
+	maxNATDashboardCredentialValues = 16
 )
 
 var (
-	// natDashboardAuthorizationGate classifies an Authorization header value
-	// (case-sensitive "Bearer " scheme included) as a credential issued by
-	// this dashboard.
-	natDashboardAuthorizationGate func(authz string) bool
-	// natDashboardCredentialValueGate classifies a raw credential value — the
-	// part after the "Bearer " scheme, exactly as the ?token= query parameter
-	// and the nz-jwt cookie carry it — as a credential issued by this
-	// dashboard.
-	natDashboardCredentialValueGate func(value string) bool
+	natDashboardCredentialGateMu sync.RWMutex
+	// natDashboardCredentialValueGate classifies a bounded batch of raw
+	// credential values. Batching lets the controller resolve all PAT hashes in
+	// one query instead of turning attacker-controlled query/cookie fan-out into
+	// one database query per value.
+	natDashboardCredentialValueGate func(ctx context.Context, values []string) []bool
 )
 
-// SetNATDashboardCredentialGate wires the dashboard-credential classifiers
+// SetNATDashboardCredentialGate wires the dashboard-credential classifier
 // used by the NAT ingress. main() injects
-// controller.IsDashboardCredential and controller.IsDashboardCredentialValue;
+// controller.ClassifyDashboardCredentialValues;
 // the setter keeps the rpc package free of a dependency on the controller
 // package, the same pattern as SetReceiptGateListener and
 // SetMCPKillSwitchObserver. A nil function fails closed: every value on that
 // channel is then treated as dashboard-issued and stripped.
-func SetNATDashboardCredentialGate(authorizationClass func(authz string) bool, valueClass func(value string) bool) {
-	natDashboardAuthorizationGate = authorizationClass
+func SetNATDashboardCredentialGate(valueClass func(ctx context.Context, values []string) []bool) {
+	natDashboardCredentialGateMu.Lock()
 	natDashboardCredentialValueGate = valueClass
+	natDashboardCredentialGateMu.Unlock()
 }
 
 // NATDashboardCredentialGateWired reports whether the dashboard-credential
-// classifiers have been wired. It exists so the main() wiring contract can be
+// classifier has been wired. It exists so the main() wiring contract can be
 // pinned by a test.
 func NATDashboardCredentialGateWired() bool {
-	return natDashboardAuthorizationGate != nil && natDashboardCredentialValueGate != nil
+	natDashboardCredentialGateMu.RLock()
+	wired := natDashboardCredentialValueGate != nil
+	natDashboardCredentialGateMu.RUnlock()
+	return wired
 }
 
 // stripDashboardCredentials removes credentials issued by this dashboard from
@@ -55,15 +62,103 @@ func NATDashboardCredentialGateWired() bool {
 // backend may authenticate with credentials of its own, and this dashboard
 // must not make policy for them.
 func stripDashboardCredentials(request *http.Request) {
-	stripDashboardAuthorizationHeader(request)
-	stripDashboardCredentialQuery(request)
-	stripDashboardCredentialCookie(request)
+	classification := classifyNATDashboardCredentialValues(request)
+	stripDashboardAuthorizationHeader(request, classification)
+	stripDashboardCredentialQuery(request, classification)
+	stripDashboardCredentialCookie(request, classification)
+}
+
+type natDashboardCredentialClassification struct {
+	wired   bool
+	limited bool
+	issued  map[string]bool
+}
+
+func (c natDashboardCredentialClassification) isDashboardCredential(value string) bool {
+	if !c.wired {
+		return true
+	}
+	if issued, ok := c.issued[value]; ok {
+		return issued
+	}
+	// Only candidate values collected from this request reach this method. A
+	// missing result therefore means the distinct-value budget was exceeded;
+	// fail closed so a dashboard credential cannot be hidden after junk values.
+	return c.limited
+}
+
+func classifyNATDashboardCredentialValues(request *http.Request) natDashboardCredentialClassification {
+	natDashboardCredentialGateMu.RLock()
+	gate := natDashboardCredentialValueGate
+	natDashboardCredentialGateMu.RUnlock()
+	classification := natDashboardCredentialClassification{
+		wired:  gate != nil,
+		issued: make(map[string]bool),
+	}
+	if gate == nil {
+		return classification
+	}
+
+	values, limited := collectNATDashboardCredentialValues(request)
+	classification.limited = limited
+	results := gate(request.Context(), values)
+	if len(results) != len(values) {
+		// A broken classifier must not turn into credential forwarding.
+		for _, value := range values {
+			classification.issued[value] = true
+		}
+		classification.limited = true
+		return classification
+	}
+	for i, value := range values {
+		classification.issued[value] = results[i]
+	}
+	return classification
+}
+
+func collectNATDashboardCredentialValues(request *http.Request) ([]string, bool) {
+	values := make([]string, 0, maxNATDashboardCredentialValues)
+	seen := make(map[string]struct{}, maxNATDashboardCredentialValues)
+	limited := false
+	add := func(value string) {
+		if _, ok := seen[value]; ok {
+			return
+		}
+		if len(values) == maxNATDashboardCredentialValues {
+			limited = true
+			return
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+
+	for _, authorization := range request.Header.Values("Authorization") {
+		raw := strings.TrimSpace(authorization)
+		if strings.HasPrefix(raw, "Bearer ") {
+			add(strings.TrimPrefix(raw, "Bearer "))
+		}
+	}
+	if request.URL != nil {
+		for _, element := range strings.Split(request.URL.RawQuery, "&") {
+			if value, ok := dashboardCredentialQueryElementValue(element); ok {
+				add(value)
+			}
+		}
+	}
+	for _, line := range request.Header.Values("Cookie") {
+		for _, pair := range strings.Split(line, ";") {
+			if value, ok := dashboardCredentialCookiePairValue(pair); ok {
+				add(value)
+			}
+		}
+	}
+	return values, limited
 }
 
 // stripDashboardAuthorizationHeader removes the Authorization header when it
 // carries a dashboard-issued credential.
-func stripDashboardAuthorizationHeader(request *http.Request) {
-	if natDashboardAuthorizationGate == nil {
+func stripDashboardAuthorizationHeader(request *http.Request, classification natDashboardCredentialClassification) {
+	if !classification.wired {
 		// Gate not wired (early startup or tests): fail closed and keep the
 		// historical behavior of stripping every Authorization header.
 		request.Header.Del("Authorization")
@@ -73,7 +168,8 @@ func stripDashboardAuthorizationHeader(request *http.Request) {
 	// dashboard-issued value in it must still not survive into the tunnel, so
 	// the whole header is dropped when one is recognized.
 	for _, value := range request.Header.Values("Authorization") {
-		if natDashboardAuthorizationGate(value) {
+		raw := strings.TrimSpace(value)
+		if strings.HasPrefix(raw, "Bearer ") && classification.isDashboardCredential(strings.TrimPrefix(raw, "Bearer ")) {
 			request.Header.Del("Authorization")
 			return
 		}
@@ -84,7 +180,7 @@ func stripDashboardAuthorizationHeader(request *http.Request) {
 // is a dashboard-issued credential. Every other element of the query string —
 // including foreign token values — is preserved byte-for-byte, so the
 // forwarded request keeps the exact query the client sent.
-func stripDashboardCredentialQuery(request *http.Request) {
+func stripDashboardCredentialQuery(request *http.Request, classification natDashboardCredentialClassification) {
 	if request.URL == nil || request.URL.RawQuery == "" {
 		return
 	}
@@ -92,7 +188,12 @@ func stripDashboardCredentialQuery(request *http.Request) {
 	kept := elements[:0]
 	changed := false
 	for _, element := range elements {
-		if isDashboardCredentialQueryElement(element) {
+		if !classification.wired && dashboardCredentialQueryElementName(element) {
+			changed = true
+			continue
+		}
+		value, candidate := dashboardCredentialQueryElementValue(element)
+		if candidate && classification.isDashboardCredential(value) {
 			changed = true
 			continue
 		}
@@ -103,32 +204,35 @@ func stripDashboardCredentialQuery(request *http.Request) {
 	}
 }
 
-// isDashboardCredentialQueryElement reports whether a raw query element
-// carries a dashboard-issued credential in the panel's token parameter.
-func isDashboardCredentialQueryElement(element string) bool {
+// dashboardCredentialQueryElementValue extracts the decoded value from a raw
+// query element carrying the panel's token parameter.
+func dashboardCredentialQueryElementValue(element string) (string, bool) {
 	rawName, rawValue, _ := strings.Cut(element, "=")
 	// The panel reads the parameter by its decoded name (gin-jwt c.Query),
 	// so an escaped key must be decoded before comparing.
 	name, err := url.QueryUnescape(rawName)
 	if err != nil || name != natDashboardJWTQueryParameter {
-		return false
-	}
-	if natDashboardCredentialValueGate == nil {
-		return true // fail closed
+		return "", false
 	}
 	// A value that fails to decode is one the panel's own query parsing drops
 	// as well, so it can never be a panel credential.
 	decoded, err := url.QueryUnescape(rawValue)
 	if err != nil {
-		return false
+		return "", false
 	}
-	return natDashboardCredentialValueGate(decoded)
+	return decoded, true
+}
+
+func dashboardCredentialQueryElementName(element string) bool {
+	rawName, _, _ := strings.Cut(element, "=")
+	name, err := url.QueryUnescape(rawName)
+	return err == nil && name == natDashboardJWTQueryParameter
 }
 
 // stripDashboardCredentialCookie removes nz-jwt cookies whose value is a
 // dashboard-issued credential. All other cookie pairs — including foreign
 // nz-jwt values — are preserved verbatim.
-func stripDashboardCredentialCookie(request *http.Request) {
+func stripDashboardCredentialCookie(request *http.Request, classification natDashboardCredentialClassification) {
 	lines := request.Header.Values("Cookie")
 	if len(lines) == 0 {
 		return
@@ -136,7 +240,7 @@ func stripDashboardCredentialCookie(request *http.Request) {
 	changed := false
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
-		nextLine, lineChanged := stripDashboardCredentialCookieLine(line)
+		nextLine, lineChanged := stripDashboardCredentialCookieLine(line, classification)
 		changed = changed || lineChanged
 		if nextLine != "" {
 			kept = append(kept, nextLine)
@@ -155,15 +259,18 @@ func stripDashboardCredentialCookie(request *http.Request) {
 // dropping the dashboard-issued nz-jwt pairs. Kept pairs keep their raw form,
 // whitespace included — except that a pair following a dropped one no longer
 // carries the removed pair's share of the "; " separator.
-func stripDashboardCredentialCookieLine(line string) (string, bool) {
+func stripDashboardCredentialCookieLine(line string, classification natDashboardCredentialClassification) (string, bool) {
 	pairs := strings.Split(line, ";")
 	kept := pairs[:0]
 	droppedBeforeFirstKept := true
 	changed := false
 	for _, pair := range pairs {
-		name, value, _ := strings.Cut(pair, "=")
-		if strings.TrimSpace(name) == natDashboardJWTCookieName &&
-			(natDashboardCredentialValueGate == nil || isDashboardCredentialCookieValue(value)) {
+		if !classification.wired && dashboardCredentialCookiePairName(pair) {
+			changed = true
+			continue
+		}
+		value, candidate := dashboardCredentialCookiePairValue(pair)
+		if candidate && classification.isDashboardCredential(value) {
 			changed = true
 			continue
 		}
@@ -179,10 +286,23 @@ func stripDashboardCredentialCookieLine(line string) (string, bool) {
 	return strings.Join(kept, ";"), true
 }
 
-// isDashboardCredentialCookieValue classifies a raw cookie value the same way
-// the panel's cookie parsing would hand it to the JWT verifier: surrounding
-// whitespace and quoting are presentation, not part of the credential.
-func isDashboardCredentialCookieValue(rawValue string) bool {
+// dashboardCredentialCookiePairValue extracts a cookie value the same way the
+// panel hands it to the JWT verifier: surrounding whitespace/quotes are
+// presentation, then Gin applies QueryUnescape.
+func dashboardCredentialCookiePairValue(pair string) (string, bool) {
+	name, rawValue, found := strings.Cut(pair, "=")
+	if !found || strings.TrimSpace(name) != natDashboardJWTCookieName {
+		return "", false
+	}
 	value := strings.Trim(strings.TrimSpace(rawValue), `"`)
-	return natDashboardCredentialValueGate(value)
+	decoded, err := url.QueryUnescape(value)
+	if err != nil {
+		return "", false
+	}
+	return decoded, true
+}
+
+func dashboardCredentialCookiePairName(pair string) bool {
+	name, _, found := strings.Cut(pair, "=")
+	return found && strings.TrimSpace(name) == natDashboardJWTCookieName
 }

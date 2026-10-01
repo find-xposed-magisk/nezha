@@ -7,8 +7,8 @@ import (
 )
 
 // TestWireNATDashboardCredentialGate pins the NAT ingress wiring contract:
-// main() must connect the real dashboard-credential classifiers
-// (controller.IsDashboardCredential / controller.IsDashboardCredentialValue)
+// main() must connect the real batched dashboard-credential classifier
+// (controller.ClassifyDashboardCredentialValues)
 // through wireNATDashboardCredentialGate before any listener serves traffic.
 // That the wired functions really classify per channel is pinned end to end
 // by the controller package's real-classifier NAT flow test.

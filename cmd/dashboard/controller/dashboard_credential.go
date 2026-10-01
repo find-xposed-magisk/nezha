@@ -1,12 +1,13 @@
 package controller
 
 import (
-	"errors"
+	"context"
 	"log"
 	"strings"
 
 	jwt "github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	ginjwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/nezhahq/nezha/model"
@@ -15,8 +16,8 @@ import (
 
 // dashboardCredentialJWTParser verifies that a JWT was signed by this
 // dashboard. It is derived from the auth middleware created in routers() and
-// exists only for IsDashboardCredential; it must never authenticate dashboard
-// requests on its own.
+// exists only for dashboard-credential classification; it must never
+// authenticate dashboard requests on its own.
 var dashboardCredentialJWTParser *ginjwt.GinJWTMiddleware
 
 // newDashboardCredentialJWTParser derives a signature-only parser from the
@@ -69,32 +70,75 @@ func IsDashboardCredential(authz string) bool {
 // issued by this dashboard (unknown PAT hash, failed signature verification)
 // returns false.
 func IsDashboardCredentialValue(value string) bool {
-	plaintext := strings.TrimSpace(value)
-	if strings.HasPrefix(plaintext, model.APITokenPrefix) {
-		return isDashboardAPIToken(plaintext)
+	classified := ClassifyDashboardCredentialValues(context.Background(), []string{value})
+	if len(classified) != 1 {
+		return true
 	}
-	return isDashboardSignedJWT(plaintext)
+	return classified[0]
 }
 
-// isDashboardAPIToken resolves a PAT-shaped value against the api_tokens
-// table. The plaintext token is only ever hashed here; it is never logged.
-func isDashboardAPIToken(plaintext string) bool {
+// ClassifyDashboardCredentialValues classifies a bounded request batch. JWTs
+// are checked independently, while all PAT-shaped values are hashed and
+// resolved with one silent IN query. This prevents attacker-controlled NAT
+// query parameters or cookies from amplifying one HTTP request into thousands
+// of SQLite queries and record-not-found log entries.
+func ClassifyDashboardCredentialValues(ctx context.Context, values []string) []bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	results := make([]bool, len(values))
+	patIndexes := make(map[string][]int)
+	for i, value := range values {
+		plaintext := strings.TrimSpace(value)
+		if strings.HasPrefix(plaintext, model.APITokenPrefix) {
+			hash := model.HashAPIToken(plaintext)
+			patIndexes[hash] = append(patIndexes[hash], i)
+			continue
+		}
+		results[i] = isDashboardSignedJWT(plaintext)
+	}
+	if len(patIndexes) == 0 {
+		return results
+	}
 	if singleton.DB == nil {
 		logDashboardCredentialUnclassifiable("api token lookup unavailable")
-		return true
+		for _, indexes := range patIndexes {
+			for _, i := range indexes {
+				results[i] = true
+			}
+		}
+		return results
 	}
-	var tok model.APIToken
-	err := singleton.DB.Where("token_hash = ?", model.HashAPIToken(plaintext)).First(&tok).Error
-	if err == nil {
-		return true
+
+	hashes := make([]string, 0, len(patIndexes))
+	for hash := range patIndexes {
+		hashes = append(hashes, hash)
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Deterministic proof the token was not issued by this dashboard:
-		// forwarding it leaks nothing the dashboard ever validated.
-		return false
+	type tokenHashRow struct {
+		TokenHash string
 	}
-	logDashboardCredentialUnclassifiable("api token lookup failed")
-	return true
+	var rows []tokenHashRow
+	err := singleton.DB.WithContext(ctx).
+		Session(&gorm.Session{Logger: logger.Discard}).
+		Model(&model.APIToken{}).
+		Select("token_hash").
+		Where("token_hash IN ?", hashes).
+		Find(&rows).Error
+	if err != nil {
+		logDashboardCredentialUnclassifiable("api token lookup failed")
+		for _, indexes := range patIndexes {
+			for _, i := range indexes {
+				results[i] = true
+			}
+		}
+		return results
+	}
+	for _, row := range rows {
+		for _, i := range patIndexes[row.TokenHash] {
+			results[i] = true
+		}
+	}
+	return results
 }
 
 // isDashboardSignedJWT verifies the token signature with the dashboard's
@@ -112,7 +156,7 @@ func isDashboardSignedJWT(token string) bool {
 }
 
 // logDashboardCredentialUnclassifiable records a classification failure. The
-// Authorization value itself is never included in the message.
+// credential value itself is never included in the message.
 func logDashboardCredentialUnclassifiable(reason string) {
-	log.Printf("NEZHA>> NAT ingress: Authorization value could not be classified (%s); stripping it as a precaution", reason)
+	log.Printf("NEZHA>> NAT ingress: credential value could not be classified (%s); stripping it as a precaution", reason)
 }

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"testing"
 	"time"
@@ -161,6 +162,35 @@ func TestIsDashboardCredentialValueClassification(t *testing.T) {
 		// fails signature verification.
 		require.False(t, IsDashboardCredentialValue("Bearer "+dashboardJWT))
 	})
+}
+
+func TestClassifyDashboardCredentialValuesBatchesPATLookup(t *testing.T) {
+	setupDashboardCredentialTest(t)
+
+	dashboardPAT := model.APITokenPrefix + "dashboard-batch-pat"
+	require.NoError(t, singleton.DB.Create(&model.APIToken{
+		UserID:    1,
+		Name:      "nat-batch-classification",
+		TokenHash: model.HashAPIToken(dashboardPAT),
+	}).Error)
+
+	queryCount := 0
+	const callbackName = "test:count-dashboard-credential-batch-query"
+	require.NoError(t, singleton.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(*gorm.DB) {
+		queryCount++
+	}))
+	t.Cleanup(func() { singleton.DB.Callback().Query().Remove(callbackName) })
+
+	values := []string{
+		dashboardPAT,
+		model.APITokenPrefix + "unknown-one",
+		dashboardPAT,
+		model.APITokenPrefix + "unknown-two",
+	}
+	classified := ClassifyDashboardCredentialValues(context.Background(), values)
+
+	require.Equal(t, []bool{true, false, true, false}, classified)
+	require.Equal(t, 1, queryCount, "all PAT hashes in one request must use one database query")
 }
 
 func TestIsDashboardCredentialFailsClosedWhenParserUnavailable(t *testing.T) {

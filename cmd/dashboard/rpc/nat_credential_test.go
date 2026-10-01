@@ -1,8 +1,11 @@
 package rpc
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/nezhahq/nezha/model"
@@ -35,27 +38,21 @@ const (
 // is foreign.
 func installNATCredentialTestGate(t *testing.T) {
 	t.Helper()
-	originalAuthorization := natDashboardAuthorizationGate
-	originalValue := natDashboardCredentialValueGate
-	natDashboardAuthorizationGate = func(authz string) bool {
-		switch authz {
-		case natTestDashboardJWT, natTestDashboardExpiredJWT, natTestDashboardAPIToken:
-			return true
-		default:
-			return false
+	natDashboardCredentialGateMu.RLock()
+	original := natDashboardCredentialValueGate
+	natDashboardCredentialGateMu.RUnlock()
+	SetNATDashboardCredentialGate(func(_ context.Context, values []string) []bool {
+		results := make([]bool, len(values))
+		for i, value := range values {
+			switch value {
+			case natTestDashboardJWTValue, natTestDashboardExpiredJWTValue, natTestDashboardPATValue:
+				results[i] = true
+			}
 		}
-	}
-	natDashboardCredentialValueGate = func(value string) bool {
-		switch value {
-		case natTestDashboardJWTValue, natTestDashboardExpiredJWTValue, natTestDashboardPATValue:
-			return true
-		default:
-			return false
-		}
-	}
+		return results
+	})
 	t.Cleanup(func() {
-		natDashboardAuthorizationGate = originalAuthorization
-		natDashboardCredentialValueGate = originalValue
+		SetNATDashboardCredentialGate(original)
 	})
 }
 
@@ -119,17 +116,69 @@ func TestStripDashboardCredentialsCookieChannelQuotedValue(t *testing.T) {
 	}
 }
 
+func TestStripDashboardCredentialsCookieChannelEscapedValue(t *testing.T) {
+	// Gin's cookie TokenLookup URL-decodes the value before JWT validation.
+	// NAT must classify the same decoded value or an encoded dashboard JWT can
+	// be accepted by the panel and then leak unchanged to the backend.
+	installNATCredentialTestGate(t)
+	request := &http.Request{Header: make(http.Header)}
+	escaped := strings.ReplaceAll(natTestDashboardJWTValue, "-", "%2D")
+	request.Header.Set("Cookie", "nz-jwt="+escaped+"; sid=abc")
+
+	stripDashboardCredentials(request)
+
+	if got := request.Header.Get("Cookie"); got != "sid=abc" {
+		t.Fatalf("cookie channel kept %q, want escaped dashboard token dropped", got)
+	}
+}
+
+func TestStripDashboardCredentialsDeduplicatesAndBoundsClassification(t *testing.T) {
+	natDashboardCredentialGateMu.RLock()
+	original := natDashboardCredentialValueGate
+	natDashboardCredentialGateMu.RUnlock()
+	t.Cleanup(func() { SetNATDashboardCredentialGate(original) })
+
+	classifiedValues := 0
+	gateCalls := 0
+	SetNATDashboardCredentialGate(func(_ context.Context, values []string) []bool {
+		gateCalls++
+		classifiedValues += len(values)
+		return make([]bool, len(values))
+	})
+
+	query := make(url.Values)
+	for range 100 {
+		query.Add("token", model.APITokenPrefix+"same-value")
+	}
+	for i := range 100 {
+		query.Add("token", fmt.Sprintf("%sunique-%d", model.APITokenPrefix, i))
+	}
+	request := &http.Request{Header: make(http.Header), URL: &url.URL{RawQuery: query.Encode()}}
+
+	stripDashboardCredentials(request)
+
+	if gateCalls != 1 {
+		t.Fatalf("classifier called %d times, want one batched call", gateCalls)
+	}
+	if classifiedValues > maxNATDashboardCredentialValues {
+		t.Fatalf("classified %d credential values, want at most %d per request", classifiedValues, maxNATDashboardCredentialValues)
+	}
+	if strings.Contains(request.URL.RawQuery, model.APITokenPrefix+"unique-99") {
+		t.Fatal("credential beyond the classification budget survived; overflow must fail closed")
+	}
+}
+
 func TestPrepareNATCapabilityFailsClosedWithoutGate(t *testing.T) {
 	// Given — unwired gates: every value on every channel is treated as
 	// dashboard-issued and stripped, foreign ones included.
-	SetNATDashboardCredentialGate(nil, nil)
-	t.Cleanup(func() { SetNATDashboardCredentialGate(nil, nil) })
+	SetNATDashboardCredentialGate(nil)
+	t.Cleanup(func() { SetNATDashboardCredentialGate(nil) })
 	request := &http.Request{
 		Header: make(http.Header),
-		URL:    &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + natTestForeignJWTValue},
+		URL:    &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + natTestForeignJWTValue + "&token=%ZZ"},
 	}
 	request.Header.Set("Authorization", natTestForeignRandom)
-	request.Header.Set("Cookie", "sid=abc; nz-jwt="+natTestForeignJWTValue)
+	request.Header.Set("Cookie", "sid=abc; nz-jwt="+natTestForeignJWTValue+"; nz-jwt=%ZZ")
 
 	// When
 	lease, err := prepareNATCapability(request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})

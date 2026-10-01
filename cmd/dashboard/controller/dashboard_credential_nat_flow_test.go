@@ -49,8 +49,8 @@ func setupNATFlowTest(t *testing.T) (*rpcService.NezhaHandler, *model.Server, *n
 
 	// Wire the gate exactly as cmd/dashboard/main.go does, with the real
 	// classifiers built by setupDashboardCredentialTest.
-	rpc.SetNATDashboardCredentialGate(IsDashboardCredential, IsDashboardCredentialValue)
-	t.Cleanup(func() { rpc.SetNATDashboardCredentialGate(nil, nil) })
+	rpc.SetNATDashboardCredentialGate(ClassifyDashboardCredentialValues)
+	t.Cleanup(func() { rpc.SetNATDashboardCredentialGate(nil) })
 
 	return handler, server, taskStream
 }
