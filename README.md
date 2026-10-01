@@ -21,45 +21,7 @@
 
 ## Sponsors / 赞助商
 
-<table>
-  <tr>
-    <td align="center" width="25%">
-      <a href="http://www.vmrack.net/?affid=nezha">
-        <img src=".github/sponsor/vmrack.jpeg" alt="VMRack" width="160">
-      </a>
-      <br>
-      <b>VMRack 洛杉矶 VPS｜CN2 GIA + AS9929 + CMIN2 三网精品线路，AMD + NVMe 高性能！</b>
-      <br><br>
-      👉 <a href="http://www.vmrack.net/?affid=nezha">vmrack</a>
-    </td>
-    <td align="center" width="25%">
-      <a href="http://www.99cdn.com/?addid=nezha">
-        <img src=".github/sponsor/99cdn.jpeg" alt="99CDN" width="160">
-      </a>
-      <br>
-      <b>🚀 99CDN｜自建 CDN，不止是加速！</b>
-      <br>
-      边缘缓存 + 智能调度 + 自动故障切换 + 商业化运营
-      <br><br>
-      🌐 <a href="http://www.99cdn.com/?addid=nezha">99cdn</a>
-    </td>
-    <td align="center" width="25%">
-      <a href="https://www.axisnow.io/zh">
-        <img src=".github/sponsor/axisnow.jpeg" alt="AxisNow" width="160">
-      </a>
-      <br>
-      <b>AxisNow｜自建私有部署 CDN｜订阅式高防 CDN</b>
-      <br>
-      自主可控、灵活组合的 CDN 网络
-      <br><br>
-      🌐 <a href="https://www.axisnow.io/zh">AxisNow</a>
-    </td>
-    <td align="center" width="25%">
-      🤝<br><br>
-      <b>期待您的支持</b>
-    </td>
-  </tr>
-</table>
+> 🤝 Sponsorship slot available / 赞助位待认领
 
 ## User Guide
 
