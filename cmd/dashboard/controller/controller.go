@@ -57,6 +57,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	if err := authMiddleware.MiddlewareInit(); err != nil {
 		log.Fatal("authMiddleware.MiddlewareInit Error:" + err.Error())
 	}
+	// Signature-only view of the auth middleware for IsDashboardCredential:
+	// same key and pinned algorithm, claims validation deliberately skipped.
+	dashboardCredentialJWTParser = newDashboardCredentialJWTParser(authMiddleware)
 	// /mcp — Model Context Protocol endpoint, authenticated by PAT only (闸 1 + 闸 2)。
 	// 不放在 /api/v1 下：MCP client 配置 URL 更短，且 MCP transport 协议演进与 REST API
 	// 解耦。鉴权一律走 apiTokenAuthMiddleware；不接受 JWT 以避免浏览器误触。

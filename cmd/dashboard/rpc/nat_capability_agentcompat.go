@@ -22,16 +22,26 @@ type natCapabilityLease struct {
 func prepareNATCapability(request *http.Request, natConfig *model.NAT) (natCapabilityLease, error) {
 	values := request.Header.Values(agentcompatcontract.IOStreamCapabilityHeader)
 	if len(values) == 0 {
-		request.Header.Del("Authorization")
+		// No capability header: legacy NAT path. Strip dashboard-issued
+		// credentials (panel JWT or panel PAT) from the Authorization header,
+		// the ?token= query parameter and the nz-jwt cookie so they never
+		// become origin credentials; foreign values are ordinary request data.
+		stripDashboardCredentials(request)
 		return natCapabilityLease{}, nil
 	}
 	request.Header.Del(agentcompatcontract.IOStreamCapabilityHeader)
 	if len(values) != 1 || values[0] == "" {
-		request.Header.Del("Authorization")
+		// Invalid capability: nothing is forwarded, but dashboard-issued
+		// credentials still must not survive into errors or task data.
+		stripDashboardCredentials(request)
 		return natCapabilityLease{}, errors.New("invalid NAT capability")
 	}
 	access, handle, err := serviceRPC.NezhaHandlerSingleton.ConsumeAgentCompatNATCapabilityForProfile(values[0], natConfig.ServerID, natConfig.ID)
-	request.Header.Del("Authorization")
+	// From here the request bytes may reach the agent (active lease) or the
+	// request ends in a 503; either way dashboard-issued credentials are
+	// stripped from every TokenLookup channel, foreign ones are forwarded
+	// untouched.
+	stripDashboardCredentials(request)
 	if err != nil {
 		return natCapabilityLease{}, errors.New("invalid NAT capability")
 	}
