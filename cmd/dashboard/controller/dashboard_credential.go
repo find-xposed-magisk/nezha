@@ -43,19 +43,33 @@ func newDashboardCredentialJWTParser(authMiddleware *ginjwt.GinJWTMiddleware) *g
 // NAT backend may authenticate with credentials of its own.
 //
 // Decision policy mirrors the dashboard's own auth middlewares: only the
-// case-sensitive "Bearer " scheme is considered; PAT-shaped values are
-// resolved against the api_tokens table; everything else is treated as a JWT.
-// Whenever the classification cannot be completed (parser or config not ready,
-// database failure) the value is conservatively reported as a dashboard
-// credential so the caller strips it; only a deterministic proof that the
-// value was not issued by this dashboard (scheme mismatch, unknown PAT hash,
-// failed signature verification) returns false.
+// case-sensitive "Bearer " scheme is considered; the value after the scheme is
+// classified by IsDashboardCredentialValue, which is also the entry point for
+// the panel's scheme-less TokenLookup channels. Only a deterministic proof
+// that the value was not issued by this dashboard (scheme mismatch, unknown
+// PAT hash, failed signature verification) returns false.
 func IsDashboardCredential(authz string) bool {
 	raw := strings.TrimSpace(authz)
 	if !strings.HasPrefix(raw, "Bearer ") {
 		return false
 	}
-	plaintext := strings.TrimSpace(strings.TrimPrefix(raw, "Bearer "))
+	return IsDashboardCredentialValue(strings.TrimPrefix(raw, "Bearer "))
+}
+
+// IsDashboardCredentialValue reports whether a raw credential value — the part
+// after the "Bearer " scheme, exactly as the panel's other TokenLookup
+// channels carry it (the ?token= query parameter and the nz-jwt cookie, see
+// initParams) — was issued by this dashboard: a panel-signed JWT or a panel
+// API token (PAT).
+//
+// Failure policy is identical to IsDashboardCredential: whenever the
+// classification cannot be completed (parser or config not ready, database
+// failure) the value is conservatively reported as a dashboard credential so
+// the caller strips it; only a deterministic proof that the value was not
+// issued by this dashboard (unknown PAT hash, failed signature verification)
+// returns false.
+func IsDashboardCredentialValue(value string) bool {
+	plaintext := strings.TrimSpace(value)
 	if strings.HasPrefix(plaintext, model.APITokenPrefix) {
 		return isDashboardAPIToken(plaintext)
 	}

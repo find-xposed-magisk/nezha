@@ -169,11 +169,7 @@ func main() {
 	grpcHandler := rpc.ServeRPC()
 	httpHandler := controller.ServeWeb(frontendDist)
 	controller.InitUpgrader()
-	// The NAT ingress strips dashboard-issued Authorization values (panel JWT /
-	// panel PAT) before tunneling a request to the agent and forwards foreign
-	// credentials untouched. ServeWeb built the JWT parser the classifier
-	// reuses, so the gate is wired right after it.
-	rpc.SetNATDashboardCredentialGate(controller.IsDashboardCredential)
+	wireNATDashboardCredentialGate()
 
 	muxHandler := newHTTPandGRPCMux(httpHandler, grpcHandler)
 	muxServerHTTP := &http.Server{
@@ -231,6 +227,18 @@ func main() {
 	}
 
 	close(errChan)
+}
+
+// wireNATDashboardCredentialGate connects the NAT ingress to the real
+// dashboard-credential classifiers. The NAT ingress strips dashboard-issued
+// credentials (panel JWT / panel PAT) from every channel the panel's own
+// TokenLookup accepts — the Authorization header, the ?token= query parameter
+// and the nz-jwt cookie — before tunneling a request to the agent, and
+// forwards foreign values untouched. ServeWeb built the JWT parser the
+// classifiers reuse, so the gate is wired right after it and before any
+// listener starts serving.
+func wireNATDashboardCredentialGate() {
+	rpc.SetNATDashboardCredentialGate(controller.IsDashboardCredential, controller.IsDashboardCredentialValue)
 }
 
 func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.Handler {

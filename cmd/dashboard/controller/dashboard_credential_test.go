@@ -117,6 +117,52 @@ func TestIsDashboardCredentialClassification(t *testing.T) {
 	})
 }
 
+// TestIsDashboardCredentialValueClassification pins the scheme-less classifier
+// that backs IsDashboardCredential and drives the ?token= query parameter and
+// nz-jwt cookie channels at NAT ingress (see IsDashboardCredentialValue).
+func TestIsDashboardCredentialValueClassification(t *testing.T) {
+	setupDashboardCredentialTest(t)
+
+	dashboardJWT := mintDashboardCredentialJWT(t, time.Hour)
+	expiredDashboardJWT := mintDashboardCredentialJWT(t, -time.Hour)
+	foreignJWT := mintForeignJWT(t)
+
+	dashboardPAT := model.APITokenPrefix + "dashboard-credential-value-pat"
+	require.NoError(t, singleton.DB.Create(&model.APIToken{
+		UserID:    1,
+		Name:      "nat-value-classification",
+		TokenHash: model.HashAPIToken(dashboardPAT),
+	}).Error)
+
+	t.Run("dashboard signed jwt is a dashboard credential", func(t *testing.T) {
+		require.True(t, IsDashboardCredentialValue(dashboardJWT))
+	})
+	t.Run("expired dashboard signed jwt is still a dashboard credential", func(t *testing.T) {
+		require.True(t, IsDashboardCredentialValue(expiredDashboardJWT))
+	})
+	t.Run("dashboard api token is a dashboard credential", func(t *testing.T) {
+		require.True(t, IsDashboardCredentialValue(dashboardPAT))
+	})
+	t.Run("foreign signed jwt is not a dashboard credential", func(t *testing.T) {
+		require.False(t, IsDashboardCredentialValue(foreignJWT))
+	})
+	t.Run("unknown api token is not a dashboard credential", func(t *testing.T) {
+		require.False(t, IsDashboardCredentialValue(model.APITokenPrefix+"unknown-to-the-dashboard"))
+	})
+	t.Run("random string is not a dashboard credential", func(t *testing.T) {
+		require.False(t, IsDashboardCredentialValue("random-not-a-token"))
+	})
+	t.Run("empty value is not a dashboard credential", func(t *testing.T) {
+		require.False(t, IsDashboardCredentialValue(""))
+	})
+	t.Run("bearer scheme is not part of the value contract", func(t *testing.T) {
+		// The query and cookie channels carry the bare value; a value that
+		// itself starts with "Bearer " is not something the panel issues and
+		// fails signature verification.
+		require.False(t, IsDashboardCredentialValue("Bearer "+dashboardJWT))
+	})
+}
+
 func TestIsDashboardCredentialFailsClosedWhenParserUnavailable(t *testing.T) {
 	setupDashboardCredentialTest(t)
 	dashboardCredentialJWTParser = nil

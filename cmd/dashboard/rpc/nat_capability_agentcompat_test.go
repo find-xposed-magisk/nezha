@@ -7,6 +7,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -62,16 +63,21 @@ func TestPrepareNATCapabilityRejectsDuplicateHeaderAfterRemovingAllValues(t *tes
 
 func TestPrepareNATCapabilityAgentCompatStripsDashboardCredentials(t *testing.T) {
 	// Given — legacy path without a capability header, then the invalid
-	// capability path: both must drop dashboard-issued Authorization values.
+	// capability path: both must drop dashboard-issued credentials from the
+	// Authorization header, the ?token= query parameter and the nz-jwt cookie.
 	installNATCredentialTestGate(t)
 	for name, credential := range map[string]string{
-		"dashboard jwt":         natTestDashboardJWT,
-		"expired dashboard jwt": natTestDashboardExpiredJWT,
-		"dashboard api token":   natTestDashboardAPIToken,
+		"dashboard jwt":         natTestDashboardJWTValue,
+		"expired dashboard jwt": natTestDashboardExpiredJWTValue,
+		"dashboard api token":   natTestDashboardPATValue,
 	} {
 		t.Run(name+"/legacy path", func(t *testing.T) {
-			request := &http.Request{Header: make(http.Header)}
-			request.Header.Set("Authorization", credential)
+			request := &http.Request{
+				Header: make(http.Header),
+				URL:    &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + credential},
+			}
+			request.Header.Set("Authorization", "Bearer "+credential)
+			request.Header.Set("Cookie", "sid=abc; nz-jwt="+credential)
 
 			lease, err := prepareNATCapability(request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})
 
@@ -82,13 +88,23 @@ func TestPrepareNATCapabilityAgentCompatStripsDashboardCredentials(t *testing.T)
 				t.Fatal("legacy NAT path unexpectedly activated")
 			}
 			if got := request.Header.Get("Authorization"); got != "" {
-				t.Fatalf("legacy NAT path retained dashboard credential %q", got)
+				t.Fatalf("legacy NAT path retained dashboard credential in Authorization %q", got)
+			}
+			if got := request.URL.RawQuery; got != "keep=1" {
+				t.Fatalf("legacy NAT path retained dashboard credential in query %q", got)
+			}
+			if got := request.Header.Get("Cookie"); got != "sid=abc" {
+				t.Fatalf("legacy NAT path retained dashboard credential in cookie %q", got)
 			}
 		})
 		t.Run(name+"/invalid capability path", func(t *testing.T) {
-			request := &http.Request{Header: make(http.Header)}
+			request := &http.Request{
+				Header: make(http.Header),
+				URL:    &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + credential},
+			}
 			request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, "malformed")
-			request.Header.Set("Authorization", credential)
+			request.Header.Set("Authorization", "Bearer "+credential)
+			request.Header.Set("Cookie", "sid=abc; nz-jwt="+credential)
 
 			lease, err := prepareNATCapability(request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})
 
@@ -99,7 +115,13 @@ func TestPrepareNATCapabilityAgentCompatStripsDashboardCredentials(t *testing.T)
 				t.Fatal("malformed capability unexpectedly activated")
 			}
 			if got := request.Header.Get("Authorization"); got != "" {
-				t.Fatalf("invalid capability path retained dashboard credential %q", got)
+				t.Fatalf("invalid capability path retained dashboard credential in Authorization %q", got)
+			}
+			if got := request.URL.RawQuery; got != "keep=1" {
+				t.Fatalf("invalid capability path retained dashboard credential in query %q", got)
+			}
+			if got := request.Header.Get("Cookie"); got != "sid=abc" {
+				t.Fatalf("invalid capability path retained dashboard credential in cookie %q", got)
 			}
 		})
 	}
@@ -124,9 +146,13 @@ func TestPrepareNATCapabilityAgentCompatStripsDashboardCredentialAfterConsumingC
 	if err != nil {
 		t.Fatalf("register capability: %v", err)
 	}
-	request := &http.Request{Header: make(http.Header)}
+	request := &http.Request{
+		Header: make(http.Header),
+		URL:    &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + natTestDashboardJWTValue},
+	}
 	request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, capability.String())
 	request.Header.Set("Authorization", natTestDashboardJWT)
+	request.Header.Set("Cookie", "sid=abc; nz-jwt="+natTestDashboardJWTValue)
 
 	// When
 	lease, err := prepareNATCapability(request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})
@@ -139,7 +165,13 @@ func TestPrepareNATCapabilityAgentCompatStripsDashboardCredentialAfterConsumingC
 		t.Fatal("valid NAT capability did not activate")
 	}
 	if got := request.Header.Get("Authorization"); got != "" {
-		t.Fatalf("dashboard credential retained after capability consumption: %q", got)
+		t.Fatalf("dashboard credential retained in Authorization after capability consumption: %q", got)
+	}
+	if got := request.URL.RawQuery; got != "keep=1" {
+		t.Fatalf("dashboard credential retained in query after capability consumption: %q", got)
+	}
+	if got := request.Header.Get("Cookie"); got != "sid=abc" {
+		t.Fatalf("dashboard credential retained in cookie after capability consumption: %q", got)
 	}
 }
 
@@ -175,6 +207,40 @@ func TestPrepareNATCapabilityAgentCompatKeepsForeignAndMissingAuthorization(t *t
 				if got[i] != values[i] {
 					t.Fatalf("legacy NAT path changed Authorization to %q, want %q", got, values)
 				}
+			}
+		})
+	}
+}
+
+func TestPrepareNATCapabilityAgentCompatKeepsForeignAndMissingQueryAndCookie(t *testing.T) {
+	// Given — legacy path: foreign query tokens and cookies are ordinary
+	// request data, and absent channels must stay untouched.
+	installNATCredentialTestGate(t)
+	for name, tc := range map[string]struct{ rawQuery, cookie string }{
+		"foreign values":  {"keep=1&token=" + natTestForeignJWTValue + "&a=%2Fx", "sid=abc; nz-jwt=" + natTestForeignJWTValue},
+		"empty values":    {"keep=1&token=", "nz-jwt="},
+		"missing channel": {"keep=1", "sid=abc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := &http.Request{
+				Header: make(http.Header),
+				URL:    &url.URL{Path: "/nat", RawQuery: tc.rawQuery},
+			}
+			request.Header.Set("Cookie", tc.cookie)
+
+			lease, err := prepareNATCapability(request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})
+
+			if err != nil {
+				t.Fatalf("legacy NAT path returned error: %v", err)
+			}
+			if lease.active {
+				t.Fatal("legacy NAT path unexpectedly activated")
+			}
+			if got := request.URL.RawQuery; got != tc.rawQuery {
+				t.Fatalf("legacy NAT path changed query to %q, want %q", got, tc.rawQuery)
+			}
+			if got := request.Header.Get("Cookie"); got != tc.cookie {
+				t.Fatalf("legacy NAT path changed cookie to %q, want %q", got, tc.cookie)
 			}
 		})
 	}
